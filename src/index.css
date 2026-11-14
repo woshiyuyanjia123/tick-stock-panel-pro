@@ -1,0 +1,199 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --w-bg: #090c10;
+  --w-pane: #0e1117;
+  --w-header: #161b24;
+  --w-row-alt: #11151d;
+  --w-hover: #1b2434;
+  --w-border: #222832;
+  --w-orange: #ff8800;
+  --w-up: #ff3535;
+  --w-down: #00c853;
+  --w-code: #e5b567;
+  --w-vol: #f0b90b;
+  --w-blue: #4da3ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #090c10;
+  color: #dfe6f0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-feature-settings: 'tnum' on, 'lnum' on;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Wind / iFinD Sharp Terminal Surface Tokens */
+.tsp-bg-grid {
+  background-color: #090c10;
+}
+
+.tsp-card {
+  position: relative;
+  background: #0e1117;
+  border: 1px solid #222832;
+  border-radius: 0;
+}
+
+.tsp-card-hero {
+  position: relative;
+  background: #0e1117;
+  border: 1px solid #222832;
+  border-top: 2px solid #ff8800;
+  border-radius: 0;
+}
+
+.tsp-kpi {
+  position: relative;
+  background: #11151d;
+  border: 1px solid #222832;
+  border-radius: 0;
+}
+
+.tsp-pill {
+  background: #151a23;
+  border: 1px solid #252c38;
+  border-radius: 2px;
+}
+
+.tsp-glow-up {
+  color: #ff3535;
+}
+
+.tsp-glow-down {
+  color: #00c853;
+}
+
+.tsp-glow-gold {
+  color: #f0b90b;
+}
+
+/* Dedicated Wind Terminal Helpers */
+.w-pane {
+  background: #0e1117;
+  border: 1px solid #222832;
+  border-radius: 0;
+}
+
+.w-header {
+  height: 26px;
+  background: #161b24;
+  border-bottom: 1px solid #232a36;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.w-title-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dfe6f0;
+}
+
+.w-title-bar::before {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 12px;
+  background: #ff8800;
+}
+
+.w-tab {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: #8b95a5;
+  border-right: 1px solid #222832;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.w-tab:hover {
+  color: #dfe6f0;
+  background: #1b2230;
+}
+
+.w-tab-active {
+  background: #0e1117;
+  color: #ff9500;
+  border-top: 2px solid #ff8800;
+  font-weight: 600;
+}
+
+.w-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.w-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 26px;
+  padding: 0 8px;
+  background: #151a23;
+  color: #8b95a5;
+  font-weight: 500;
+  font-size: 11px;
+  border-bottom: 1px solid #252c38;
+  white-space: nowrap;
+}
+
+.w-table tbody tr {
+  height: 26px;
+  border-bottom: 1px solid #181d26;
+}
+
+.w-table tbody tr:nth-child(even) {
+  background: #11151d;
+}
+
+.w-table tbody tr:hover {
+  background: #1b2434;
+}
+
+.w-table tbody td {
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* 4px Square Terminal Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090c10;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2b3444;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3e4b61;
+}

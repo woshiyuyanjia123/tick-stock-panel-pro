@@ -1,0 +1,57 @@
+{
+  "name": "tick-stock-panel-pro",
+  "version": "1.1.0",
+  "description": "Institutional Wind-style A-Share, Domestic Futures, Polymarket Cognitive Pricing & Fu Peng Macro FICC Quantitative Terminal",
+  "private": false,
+  "license": "MIT",
+  "author": "TSP Quant Engineering",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/woshiyuyanjia123/tick-stock-panel-pro.git"
+  },
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev:server": "tsx server/index.ts",
+    "dev:web": "vite --port 5173",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts",
+    "icons:gen": "node scripts/generate_icons.mjs",
+    "build:server": "node scripts/bundle_server.mjs",
+    "build:all": "npm run icons:gen && npm run build && npm run build:server",
+    "electron:start": "npm run build:all && electron .",
+    "electron:smoke": "npm run build:all && electron . --smoke-test",
+    "dist:win": "npm run build:all && electron-builder --win nsis portable --x64 --publish never",
+    "dist:mac": "npm run build:all && electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "desktop:build": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/build_desktop.ps1",
+    "desktop": "TSP_Pro_Desktop.exe"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "cors": "^2.8.5",
+    "echarts": "^5.6.0",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

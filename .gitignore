@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build & Desktop Packaging Outputs (distributed via GitHub Releases)
+dist/
+dist-electron/
+release/
+build/*.png
+build/*.ico
+
+# Legacy Windows .NET launcher artifact (built locally via npm run desktop:build)
+TSP_Pro_Desktop.exe
+desktop/*.ico
+
+# Local Runtime State, SQLite WAL Databases & User Credentials
+data/*
+!data/.gitkeep
+
+# Temporary Verification Scripts & Logs
+*.log
+npm-debug.log*
+verify_*.ts
+
+# OS & Editor Noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Environment Secrets
+.env
+.env.*
+!.env.example

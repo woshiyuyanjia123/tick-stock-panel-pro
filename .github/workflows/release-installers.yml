@@ -1,0 +1,155 @@
+name: Build & Publish Cross-Platform Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows Installer (NSIS Setup + Portable)
+    runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows NSIS Setup & Portable EXE
+        shell: pwsh
+        run: npm run dist:win
+
+      - name: Verify packaged Windows EXE smoke test
+        shell: pwsh
+        run: |
+          $exe = ".\release\win-unpacked\TICK STOCK PANEL Pro.exe"
+          if (-not (Test-Path $exe)) { throw "Missing unpacked executable: $exe" }
+          $out = & $exe --smoke-test | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { throw "Smoke test failed with exit code $LASTEXITCODE" }
+          if ($out -notmatch "ELECTRON_SMOKE_TEST=PASS") { throw "Smoke test output missing PASS marker" }
+
+      - name: Upload Windows installers artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            release/TSP-Pro-Setup-*.exe
+            release/TSP-Pro-Portable-*.exe
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS Installer (Apple Silicon arm64 + Intel x64 DMG/PKG/ZIP)
+    runs-on: macos-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build macOS DMG & ZIP (arm64 + x64)
+        run: npm run dist:mac
+
+      - name: Build native macOS PKG installers (arm64 + x64)
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APP_ARM64="release/mac-arm64/TICK STOCK PANEL Pro.app"
+          APP_X64="release/mac/TICK STOCK PANEL Pro.app"
+          if [ -d "release/mac-x64/TICK STOCK PANEL Pro.app" ]; then
+            APP_X64="release/mac-x64/TICK STOCK PANEL Pro.app"
+          fi
+          if [ ! -d "$APP_ARM64" ]; then
+            echo "Missing arm64 app bundle at $APP_ARM64"
+            ls -la release
+            exit 1
+          fi
+          if [ ! -d "$APP_X64" ]; then
+            echo "Missing x64 app bundle at $APP_X64"
+            ls -la release
+            exit 1
+          fi
+          pkgbuild --component "$APP_ARM64" --install-location "/Applications" "release/TSP-Pro-Installer-${VERSION}-arm64.pkg"
+          pkgbuild --component "$APP_X64" --install-location "/Applications" "release/TSP-Pro-Installer-${VERSION}-x64.pkg"
+          ls -lh release/*.dmg release/*.pkg release/*.zip
+
+      - name: Verify packaged macOS App smoke test (arm64)
+        run: |
+          BIN="release/mac-arm64/TICK STOCK PANEL Pro.app/Contents/MacOS/TICK STOCK PANEL Pro"
+          if [ ! -x "$BIN" ]; then
+            echo "Missing executable: $BIN"
+            exit 1
+          fi
+          OUT=$("$BIN" --smoke-test)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ELECTRON_SMOKE_TEST=PASS"
+
+      - name: Upload macOS installers artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installers
+          path: |
+            release/TSP-Pro-*.dmg
+            release/TSP-Pro-*.pkg
+            release/TSP-Pro-*.zip
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release & SHA256 Checksums
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Windows & macOS installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
+
+      - name: Resolve Release Tag
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "TICK STOCK PANEL Pro ${{ steps.meta.outputs.tag }} (Windows & macOS Installers)"
+          generate_release_notes: true
+          files: release-assets/*
