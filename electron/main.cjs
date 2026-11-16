@@ -6,6 +6,7 @@ const path = require('node:path');
 const {
   app,
   BrowserWindow,
+  dialog,
   Menu,
   Tray,
   ipcMain,
@@ -27,6 +28,7 @@ const TRAY_ICON_PATH = path.join(APP_ROOT, 'build', 'tray.png');
 let mainWindow = null;
 let tray = null;
 let serverProc = null;
+let ownsBackend = false;
 let serverPort = 3130;
 let isAlwaysOnTop = false;
 let isQuitting = false;
@@ -37,17 +39,24 @@ if (isWin) {
 }
 app.setName('TICK STOCK PANEL Pro');
 
-if (!isSmokeTest) {
-  const gotLock = app.requestSingleInstanceLock();
-  if (!gotLock) {
+let hasSingleInstanceLock = true;
+if (isSmokeTest) {
+  smokeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsp-pro-smoke-'));
+  const smokeUserData = path.join(smokeTmpDir, 'userData');
+  fs.mkdirSync(smokeUserData, { recursive: true });
+  app.setPath('userData', smokeUserData);
+} else {
+  hasSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!hasSingleInstanceLock) {
     app.quit();
-    process.exit(0);
   }
 }
 
 function getWritableDataDir() {
   if (isSmokeTest) {
-    smokeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsp-pro-smoke-'));
+    if (!smokeTmpDir) {
+      smokeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsp-pro-smoke-'));
+    }
     const d = path.join(smokeTmpDir, 'data');
     fs.mkdirSync(d, { recursive: true });
     return d;
@@ -132,6 +141,19 @@ function fetchLocalJson(port, urlPath, timeoutMs = 1500) {
       req.destroy(new Error('HTTP timeout'));
     });
   });
+}
+
+async function tryReuseHealthyBackend(port) {
+  if (isSmokeTest) return null;
+  try {
+    const diag = await fetchLocalJson(port, '/api/saas/diagnostics', 900);
+    if (diag && Array.isArray(diag.tables) && diag.tables.length >= 15) {
+      return diag;
+    }
+  } catch {
+    // no running local backend on this port
+  }
+  return null;
 }
 
 async function waitForBackendReady(port, maxWaitMs = 20000) {
@@ -219,13 +241,14 @@ function startBackendProcess(port, dataDir) {
 }
 
 function stopBackendProcess() {
-  if (serverProc) {
+  if (ownsBackend && serverProc) {
     try {
       serverProc.kill();
     } catch {
       // ignore
     }
     serverProc = null;
+    ownsBackend = false;
   }
   if (smokeTmpDir && fs.existsSync(smokeTmpDir)) {
     try {
@@ -237,11 +260,22 @@ function stopBackendProcess() {
   }
 }
 
+function bringWindowToFront(win) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  if (isWin && !isAlwaysOnTop) {
+    win.setAlwaysOnTop(true);
+    win.focus();
+    win.setAlwaysOnTop(false);
+  } else {
+    win.focus();
+  }
+}
+
 function navigateToTab(tab) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  bringWindowToFront(mainWindow);
   const targetUrl = `http://127.0.0.1:${serverPort}/?client=desktop&tab=${encodeURIComponent(tab)}`;
   void mainWindow.loadURL(targetUrl);
 }
@@ -388,10 +422,7 @@ function setupTray() {
 
     updateTrayMenu();
     tray.on('double-click', () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      bringWindowToFront(mainWindow);
     });
   } catch {
     // Non-fatal if OS desktop environment lacks system tray
@@ -450,13 +481,13 @@ function openPopoutWindow(tab = 'fact-fupeng', alwaysOnTop = false) {
   return pop;
 }
 
-function createMainWindow(port, initialTab = 'dashboard') {
+function createMainWindow(port, initialTab = 'fact-fupeng', loadImmediately = true) {
   const win = new BrowserWindow({
     width: 1600,
     height: 960,
     minWidth: 1200,
     minHeight: 760,
-    show: false,
+    show: !isSmokeTest,
     backgroundColor: '#090c10',
     title: 'TICK STOCK PANEL Pro (v1.2.0-enterprise)',
     icon: fs.existsSync(ICON_PATH) ? ICON_PATH : undefined,
@@ -483,12 +514,6 @@ function createMainWindow(port, initialTab = 'dashboard') {
     }
   });
 
-  if (!isSmokeTest) {
-    win.once('ready-to-show', () => {
-      win.show();
-    });
-  }
-
   win.on('closed', () => {
     if (mainWindow === win) {
       mainWindow = null;
@@ -496,10 +521,19 @@ function createMainWindow(port, initialTab = 'dashboard') {
   });
 
   mainWindow = win;
-  const startUrl = `http://127.0.0.1:${port}/?client=desktop${
-    initialTab ? `&tab=${encodeURIComponent(initialTab)}` : ''
-  }`;
-  void win.loadURL(startUrl);
+  if (!isSmokeTest) {
+    bringWindowToFront(win);
+  }
+
+  if (loadImmediately) {
+    const startUrl = `http://127.0.0.1:${port}/?client=desktop${
+      initialTab ? `&tab=${encodeURIComponent(initialTab)}` : ''
+    }`;
+    void win.loadURL(startUrl);
+  } else if (!isSmokeTest) {
+    const bootHtml = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#090c10;color:#dfe6f0;font-family:Consolas,monospace;display:flex;align-items:center;justify-content:center}.box{border:1px solid #222832;background:#0e1117;padding:24px 32px;min-width:440px}.tag{background:#ff8800;color:#090c10;font-weight:700;padding:2px 8px;display:inline-block;margin-bottom:12px;font-size:12px}.msg{color:#e5b567;font-size:13px}.sub{color:#7d8796;font-size:11px;margin-top:8px}</style></head><body><div class="box"><div class="tag">W·TSP 终端 v1.2.0-enterprise</div><div class="msg">正在挂载本地 SQLite WAL 实盘引擎与五路抓取守护...</div><div class="sub">127.0.0.1 · 机构量化决策与 OMS 实盘执行中枢</div></div></body></html>`;
+    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(bootHtml)}`);
+  }
   return win;
 }
 
@@ -534,9 +568,9 @@ ipcMain.handle('tsp:open-popout', (_evt, arg) => {
 
 app.on('second-instance', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    bringWindowToFront(mainWindow);
+  } else if (serverPort && !isSmokeTest) {
+    createMainWindow(serverPort, 'fact-fupeng', true);
   }
 });
 
@@ -562,15 +596,21 @@ app.on('activate', () => {
 
 async function bootstrap() {
   try {
-    const dataDir = getWritableDataDir();
-    serverPort = await pickAvailablePort();
-    startBackendProcess(serverPort, dataDir);
+    const win = createMainWindow(3130, 'fact-fupeng', false);
+    let diag = await tryReuseHealthyBackend(3130);
+    if (diag) {
+      serverPort = 3130;
+      ownsBackend = false;
+    } else {
+      const dataDir = getWritableDataDir();
+      serverPort = await pickAvailablePort();
+      ownsBackend = true;
+      startBackendProcess(serverPort, dataDir);
+      diag = await waitForBackendReady(serverPort, 20000);
+    }
 
-    const diag = await waitForBackendReady(serverPort, 20000);
     buildAppMenu();
     setupTray();
-
-    const win = createMainWindow(serverPort, 'fact-fupeng');
 
     if (isSmokeTest) {
       let finished = false;
@@ -591,7 +631,10 @@ async function bootstrap() {
         app.exit(1);
       });
 
-      win.webContents.once('did-finish-load', () => {
+      win.webContents.on('did-finish-load', () => {
+        if (finished) return;
+        const currentUrl = win.webContents.getURL();
+        if (!currentUrl.startsWith(`http://127.0.0.1:${serverPort}`)) return;
         setTimeout(() => {
           if (finished) return;
           finished = true;
@@ -605,11 +648,23 @@ async function bootstrap() {
         }, 400);
       });
     }
+
+    const startUrl = `http://127.0.0.1:${serverPort}/?client=desktop&tab=fact-fupeng`;
+    void win.loadURL(startUrl);
   } catch (err) {
     console.error(`TSP_ELECTRON_BOOT_ERROR: ${err?.stack || err}`);
+    if (!isSmokeTest) {
+      try {
+        dialog.showErrorBox('TICK STOCK PANEL Pro 启动异常', String(err?.stack || err));
+      } catch {
+        // ignore dialog failure
+      }
+    }
     stopBackendProcess();
     app.exit(1);
   }
 }
 
-void app.whenReady().then(bootstrap);
+if (hasSingleInstanceLock) {
+  void app.whenReady().then(bootstrap);
+}
