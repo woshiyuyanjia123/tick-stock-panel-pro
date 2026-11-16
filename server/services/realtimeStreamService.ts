@@ -26,7 +26,11 @@ import { fetchIndices, resolveTradingDates } from '../providers/tencent';
 import { cleanCode, getBeijingTimeInfo } from '../utils/marketHelpers';
 import { captureConsensusSnapshot } from './altConsensusService';
 import { getCpoTransmissionOverview } from './cpoTransmissionService';
-import { getActivePortfolioQuickSummary } from './paperTradingService';
+import {
+  evaluateOms4of4AutoFollow,
+  evaluateOmsStopLossGuards,
+  getActivePortfolioQuickSummary,
+} from './paperTradingService';
 import { dispatchAlertToWebhooks } from './webhookAndArchiveService';
 
 export type ServerSseEventType = 'connected' | 'pulse' | 'alert' | 'cpo_gate' | 'job_tick' | string;
@@ -55,6 +59,8 @@ let alertWatchTimer: ReturnType<typeof setInterval> | null = null;
 let consensusTimer: ReturnType<typeof setInterval> | null = null;
 let fupengTimer: ReturnType<typeof setInterval> | null = null;
 let factWatchTimer: ReturnType<typeof setInterval> | null = null;
+let cadenceCheckTimer: ReturnType<typeof setInterval> | null = null;
+let activeSessionMode: 'PRE_OPEN' | 'LIVE_TRADING' | 'OFF_HOURS' | null = null;
 let pulseWarmupTimer: ReturnType<typeof setTimeout> | null = null;
 let alertWarmupTimer: ReturnType<typeof setTimeout> | null = null;
 let consensusWarmupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -124,8 +130,65 @@ const jobs: Record<
   },
 };
 
+interface SessionCadenceConfig {
+  mode: 'PRE_OPEN' | 'LIVE_TRADING' | 'OFF_HOURS';
+  label: string;
+  pulseSec: number;
+  alertSec: number;
+  factSec: number;
+  fupengSec: number;
+  consensusSec: number;
+}
+
+function resolveSessionCadence(): SessionCadenceConfig {
+  const now = new Date();
+  const bj = new Date(now.getTime() + now.getTimezoneOffset() * 60000 + 8 * 3600 * 1000);
+  const day = bj.getDay(); // 0 Sun, 6 Sat
+  const mins = bj.getHours() * 60 + bj.getMinutes();
+  const isWeekday = day >= 1 && day <= 5;
+
+  if (isWeekday && mins >= 8 * 60 + 45 && mins < 9 * 60 + 30) {
+    return {
+      mode: 'PRE_OPEN',
+      label: '盘前竞价高频巡检 (5s)',
+      pulseSec: 5,
+      alertSec: 20,
+      factSec: 30,
+      fupengSec: 300,
+      consensusSec: 900,
+    };
+  }
+  if (
+    isWeekday &&
+    ((mins >= 9 * 60 + 30 && mins <= 11 * 60 + 35) || (mins >= 13 * 60 && mins <= 15 * 60 + 5))
+  ) {
+    return {
+      mode: 'LIVE_TRADING',
+      label: '盘中实盘高频巡检 (6s)',
+      pulseSec: 6,
+      alertSec: 30,
+      factSec: 45,
+      fupengSec: 480,
+      consensusSec: 900,
+    };
+  }
+  return {
+    mode: 'OFF_HOURS',
+    label: '非A股/夜盘宏观巡检 (25s)',
+    pulseSec: 25,
+    alertSec: 90,
+    factSec: 120,
+    fupengSec: 600,
+    consensusSec: 900,
+  };
+}
+
+const initialCadence = resolveSessionCadence();
+
 const commandStripState: GlobalCommandStripSummary = {
   updatedAt: '',
+  sessionMode: initialCadence.mode,
+  sessionLabel: initialCadence.label,
   fupengRegime: 'FICC哑铃框架待同步',
   fupengIntelCount: 0,
   fupengLastScrapedAt: null,
@@ -140,10 +203,13 @@ const commandStripState: GlobalCommandStripSummary = {
 };
 
 function snapshotCommandStrip(): GlobalCommandStripSummary {
+  const cadence = resolveSessionCadence();
   const jobValues = Object.values(jobs);
   return {
     ...commandStripState,
     updatedAt: nowBjStr(),
+    sessionMode: cadence.mode,
+    sessionLabel: cadence.label,
     activeJobsOk: jobValues.filter((j) => j.status === 'ok').length,
     totalJobs: jobValues.length,
   };
@@ -454,10 +520,27 @@ export async function runAlertAndCpoWatchJob(): Promise<void> {
       cpoRegimeText = 'CPO巡检暂不可用';
     }
 
+    let omsGuardCount = 0;
+    const guardEvents = await evaluateOmsStopLossGuards().catch(() => [] as AlertTriggerEvent[]);
+    for (const ev of guardEvents) {
+      if (knownAlertIds.has(ev.id)) continue;
+      knownAlertIds.add(ev.id);
+      dbAppendAlertEvent(ev, 'u_desk_admin');
+      emitServerEvent('alert', ev);
+      omsGuardCount++;
+      await dispatchAlertToWebhooks('u_desk_admin', {
+        eventType: 'anomaly',
+        title: `[TSP Pro OMS证伪止损] ${ev.code} ${ev.name}`,
+        message: ev.message,
+        symbol: `${ev.code} ${ev.name}`,
+        level: ev.level,
+      }).catch(() => undefined);
+    }
+
     jobs.alert_and_cpo_watch.lastRunAt = nowBjStr();
     jobs.alert_and_cpo_watch.runCount += 1;
     jobs.alert_and_cpo_watch.status = 'ok';
-    jobs.alert_and_cpo_watch.lastDetail = `规则新增告警 ${newRuleAlerts} 条 | CPO: ${cpoRegimeText}${cpoTransitioned ? ' [已触发切换通知]' : ''}`;
+    jobs.alert_and_cpo_watch.lastDetail = `规则新增告警 ${newRuleAlerts} 条 | CPO: ${cpoRegimeText}${cpoTransitioned ? ' [已触发切换通知]' : ''}${omsGuardCount > 0 ? ` | OMS风控 ${omsGuardCount} 笔` : ''}`;
 
     if (clients.size > 0) {
       emitServerEvent('job_tick', {
@@ -649,10 +732,29 @@ export async function runFactBuyPointWatchJob(): Promise<void> {
     for (const sym of currentSet) lastFact4of4Set.add(sym);
     fact4of4Hydrated = true;
 
+    let autoFollowCount = 0;
+    const autoFollowEvents = await evaluateOms4of4AutoFollow(ov.profiles).catch(
+      () => [] as AlertTriggerEvent[]
+    );
+    for (const ev of autoFollowEvents) {
+      if (knownAlertIds.has(ev.id)) continue;
+      knownAlertIds.add(ev.id);
+      dbAppendAlertEvent(ev, 'u_desk_admin');
+      emitServerEvent('alert', ev);
+      autoFollowCount++;
+      await dispatchAlertToWebhooks('u_desk_admin', {
+        eventType: 'pm_shock',
+        title: `[TSP Pro 4/4自动跟单成交] ${ev.code} ${ev.name}`,
+        message: ev.message,
+        symbol: `${ev.code} ${ev.name}`,
+        level: ev.level,
+      }).catch(() => undefined);
+    }
+
     jobs.fact_buypoint_watch.lastRunAt = nowBjStr();
     jobs.fact_buypoint_watch.runCount += 1;
     jobs.fact_buypoint_watch.status = 'ok';
-    jobs.fact_buypoint_watch.lastDetail = `18标的审计完成 · 4/4买点 ${list4.length} 只 (${list4.map((x) => x.symbol).join('/') || '无'}) | 3/4临近 ${list3.length} 只`;
+    jobs.fact_buypoint_watch.lastDetail = `18标的审计完成 · 4/4买点 ${list4.length} 只 (${list4.map((x) => x.symbol).join('/') || '无'}) | 3/4临近 ${list3.length} 只${autoFollowCount > 0 ? ` | 自动跟单 ${autoFollowCount} 笔` : ''}`;
 
     if (clients.size > 0) {
       emitServerEvent('job_tick', {
@@ -747,6 +849,52 @@ export function handleSseConnection(
   res.on('close', cleanup);
 }
 
+function applySessionTimers(force = false): void {
+  const cadence = resolveSessionCadence();
+  commandStripState.sessionMode = cadence.mode;
+  commandStripState.sessionLabel = cadence.label;
+
+  if (!force && activeSessionMode === cadence.mode) return;
+  activeSessionMode = cadence.mode;
+
+  if (pulseTimer) clearInterval(pulseTimer);
+  if (alertWatchTimer) clearInterval(alertWatchTimer);
+  if (consensusTimer) clearInterval(consensusTimer);
+  if (fupengTimer) clearInterval(fupengTimer);
+  if (factWatchTimer) clearInterval(factWatchTimer);
+
+  jobs.market_pulse.intervalSec = cadence.pulseSec;
+  jobs.alert_and_cpo_watch.intervalSec = cadence.alertSec;
+  jobs.fact_buypoint_watch.intervalSec = cadence.factSec;
+  jobs.fupeng_24h_watch.intervalSec = cadence.fupengSec;
+  jobs.consensus_auto_snapshot.intervalSec = cadence.consensusSec;
+
+  pulseTimer = setInterval(() => {
+    void runMarketPulseJob();
+  }, cadence.pulseSec * 1000);
+  pulseTimer.unref();
+
+  alertWatchTimer = setInterval(() => {
+    void runAlertAndCpoWatchJob();
+  }, cadence.alertSec * 1000);
+  alertWatchTimer.unref();
+
+  consensusTimer = setInterval(() => {
+    void runConsensusAutoSnapshotJob();
+  }, cadence.consensusSec * 1000);
+  consensusTimer.unref();
+
+  fupengTimer = setInterval(() => {
+    void runFupeng24hWatchJob();
+  }, cadence.fupengSec * 1000);
+  fupengTimer.unref();
+
+  factWatchTimer = setInterval(() => {
+    void runFactBuyPointWatchJob();
+  }, cadence.factSec * 1000);
+  factWatchTimer.unref();
+}
+
 export function startRealtimeDaemon(): void {
   if (daemonStarted) return;
   daemonStarted = true;
@@ -782,40 +930,21 @@ export function startRealtimeDaemon(): void {
   }, 15_000);
   consensusWarmupTimer.unref();
 
-  pulseTimer = setInterval(() => {
-    void runMarketPulseJob();
-  }, 8_000);
-  pulseTimer.unref();
-
-  alertWatchTimer = setInterval(() => {
-    void runAlertAndCpoWatchJob();
-  }, 35_000);
-  alertWatchTimer.unref();
-
-  consensusTimer = setInterval(() => {
-    void runConsensusAutoSnapshotJob();
-  }, 15 * 60 * 1000);
-  consensusTimer.unref();
-
   fupengWarmupTimer = setTimeout(() => {
     void runFupeng24hWatchJob();
   }, 8_000);
   fupengWarmupTimer.unref();
-
-  fupengTimer = setInterval(() => {
-    void runFupeng24hWatchJob();
-  }, 600_000);
-  fupengTimer.unref();
 
   factWatchWarmupTimer = setTimeout(() => {
     void runFactBuyPointWatchJob();
   }, 10_000);
   factWatchWarmupTimer.unref();
 
-  factWatchTimer = setInterval(() => {
-    void runFactBuyPointWatchJob();
+  applySessionTimers(true);
+  cadenceCheckTimer = setInterval(() => {
+    applySessionTimers(false);
   }, 60_000);
-  factWatchTimer.unref();
+  cadenceCheckTimer.unref();
 }
 
 export function stopRealtimeDaemon(): void {
@@ -824,6 +953,7 @@ export function stopRealtimeDaemon(): void {
   if (consensusTimer) clearInterval(consensusTimer);
   if (fupengTimer) clearInterval(fupengTimer);
   if (factWatchTimer) clearInterval(factWatchTimer);
+  if (cadenceCheckTimer) clearInterval(cadenceCheckTimer);
   if (pulseWarmupTimer) clearTimeout(pulseWarmupTimer);
   if (alertWarmupTimer) clearTimeout(alertWarmupTimer);
   if (consensusWarmupTimer) clearTimeout(consensusWarmupTimer);
@@ -834,11 +964,13 @@ export function stopRealtimeDaemon(): void {
   consensusTimer = null;
   fupengTimer = null;
   factWatchTimer = null;
+  cadenceCheckTimer = null;
   pulseWarmupTimer = null;
   alertWarmupTimer = null;
   consensusWarmupTimer = null;
   fupengWarmupTimer = null;
   factWatchWarmupTimer = null;
+  activeSessionMode = null;
   daemonStarted = false;
 
   for (const client of Array.from(clients.values())) {
@@ -867,10 +999,13 @@ export function emitServerEvent(
 }
 
 export function getStreamDiagnostics(): SaasSystemDiagnostics['stream'] {
+  const cadence = resolveSessionCadence();
   return {
     connectedClients: clients.size,
     totalFramesPushed,
     uptimeSec: Math.max(0, Math.round((Date.now() - startedAtMs) / 1000)),
+    sessionMode: cadence.mode,
+    sessionLabel: cadence.label,
     jobs: [
       { ...jobs.market_pulse },
       { ...jobs.alert_and_cpo_watch },

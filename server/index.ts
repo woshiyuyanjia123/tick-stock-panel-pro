@@ -64,10 +64,16 @@ import {
   closePaperPosition,
   createPaperPortfolio,
   exportPaperOrdersCsv,
+  getOmsQuotePreview,
   getPaperDeskOverview,
   placePaperOrder,
   resetPaperPortfolio,
+  updatePositionStops,
 } from './services/paperTradingService';
+import {
+  dbGetOmsPolicy,
+  dbSaveOmsPolicy,
+} from './db/sqliteDb';
 import {
   getGlobalCommandStripSummary,
   getStreamDiagnostics,
@@ -151,7 +157,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 
     res.json({
       ok: true,
-      version: 'v1.1.0-enterprise',
+      version: 'v1.2.0-enterprise',
       tradingDate: dates.latestDate,
       isMarketOpen: dates.isMarketOpen,
       serverTime: new Date().toISOString().replace('T', ' ').slice(0, 19),
@@ -629,7 +635,7 @@ app.post('/api/consensus/backtest', async (req: Request, res: Response) => {
   }
 });
 
-// ================= V6 (v1.0.0-enterprise) 多租户SaaS · 模拟实盘舱 · SQLite归档 · Webhook · SSE流 =================
+// ================= V6–V8 (v1.2.0-enterprise) 多租户SaaS · 机构OMS实盘交易柜台 · SQLite归档 · Webhook · SSE流 =================
 
 app.get('/api/saas/diagnostics', (req: Request, res: Response) => {
   try {
@@ -689,7 +695,7 @@ app.delete('/api/saas/api-keys/:id', (req: Request, res: Response) => {
   }
 });
 
-// Paper Trading Desk (A-Share T+1 & Domestic Futures T+0)
+// Institutional OMS Execution Desk (A-Share T+1 & Domestic Futures T+0)
 app.get('/api/paper/overview', async (req: Request, res: Response) => {
   try {
     const user = resolveTenantUser(req);
@@ -697,7 +703,43 @@ app.get('/api/paper/overview', async (req: Request, res: Response) => {
     const data = await getPaperDeskOverview(user.id, pfId);
     res.json(data);
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Paper desk overview failed' });
+    res.status(500).json({ error: err?.message || 'OMS desk overview failed' });
+  }
+});
+
+app.get('/api/paper/quote-preview', async (req: Request, res: Response) => {
+  try {
+    const symbol = String(req.query.symbol || '').trim();
+    const market =
+      req.query.market === 'ashare' || req.query.market === 'futures'
+        ? req.query.market
+        : undefined;
+    if (!symbol) {
+      res.status(400).json({ error: 'Missing symbol query parameter' });
+      return;
+    }
+    const preview = await getOmsQuotePreview(symbol, market);
+    res.json(preview);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'OMS quote preview failed' });
+  }
+});
+
+app.get('/api/paper/policy', (req: Request, res: Response) => {
+  try {
+    const user = resolveTenantUser(req);
+    res.json(dbGetOmsPolicy(user.id));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Load OMS policy failed' });
+  }
+});
+
+app.post('/api/paper/policy', (req: Request, res: Response) => {
+  try {
+    const user = resolveTenantUser(req);
+    res.json(dbSaveOmsPolicy(user.id, req.body || {}));
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'Save OMS policy failed' });
   }
 });
 
@@ -705,12 +747,12 @@ app.post('/api/paper/portfolios', async (req: Request, res: Response) => {
   try {
     const user = resolveTenantUser(req);
     const data = await createPaperPortfolio(user.id, {
-      name: String(req.body?.name || '新建模拟组合'),
+      name: String(req.body?.name || '新建策略实盘专户'),
       initialCapital: Number(req.body?.initialCapital || 1_000_000),
     });
     res.json(data);
   } catch (err: any) {
-    res.status(400).json({ error: err?.message || 'Create paper portfolio failed' });
+    res.status(400).json({ error: err?.message || 'Create portfolio failed' });
   }
 });
 
@@ -720,7 +762,7 @@ app.post('/api/paper/portfolios/:id/reset', async (req: Request, res: Response) 
     const data = await resetPaperPortfolio(user.id, req.params.id);
     res.json(data);
   } catch (err: any) {
-    res.status(400).json({ error: err?.message || 'Reset paper portfolio failed' });
+    res.status(400).json({ error: err?.message || 'Reset portfolio failed' });
   }
 });
 
@@ -730,17 +772,29 @@ app.post('/api/paper/order', async (req: Request, res: Response) => {
     const data = await placePaperOrder(user.id, req.body || {});
     res.json(data);
   } catch (err: any) {
-    res.status(400).json({ error: err?.message || 'Paper order failed' });
+    res.status(400).json({ error: err?.message || 'OMS order failed' });
   }
 });
 
 app.post('/api/paper/positions/:id/close', async (req: Request, res: Response) => {
   try {
     const user = resolveTenantUser(req);
-    const data = await closePaperPosition(user.id, req.params.id);
+    const ratio = req.body?.ratio !== undefined ? Number(req.body.ratio) : 1;
+    const pfId = typeof req.body?.portfolioId === 'string' ? req.body.portfolioId : undefined;
+    const data = await closePaperPosition(user.id, req.params.id, pfId, ratio);
     res.json(data);
   } catch (err: any) {
-    res.status(400).json({ error: err?.message || 'Close paper position failed' });
+    res.status(400).json({ error: err?.message || 'Close position failed' });
+  }
+});
+
+app.patch('/api/paper/positions/:id/stops', async (req: Request, res: Response) => {
+  try {
+    const user = resolveTenantUser(req);
+    const data = await updatePositionStops(user.id, req.params.id, req.body || {});
+    res.json(data);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'Update position stops failed' });
   }
 });
 
@@ -750,10 +804,10 @@ app.get('/api/paper/export.csv', (req: Request, res: Response) => {
     const pfId = typeof req.query.portfolioId === 'string' && req.query.portfolioId ? req.query.portfolioId : undefined;
     const csv = exportPaperOrdersCsv(user.id, pfId);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="tsp_paper_orders.csv"');
+    res.setHeader('Content-Disposition', 'attachment; filename="tsp_oms_orders.csv"');
     res.send(csv.startsWith('\uFEFF') ? csv : `\uFEFF${csv}`);
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Export paper orders CSV failed' });
+    res.status(500).json({ error: err?.message || 'Export OMS orders CSV failed' });
   }
 });
 
@@ -862,7 +916,7 @@ app.get('/api/stream/command-strip', async (_req: Request, res: Response) => {
   }
 });
 
-// ================= V7 (v1.1.0-enterprise) 多标的专属事实因子确定性买点 & 付鹏24h宏观FICC框架 =================
+// ================= V7 (v1.2.0-enterprise) 多标的专属事实因子确定性买点 & 付鹏24h宏观FICC框架 =================
 
 app.get('/api/fact-buypoint/overview', async (_req: Request, res: Response) => {
   try {

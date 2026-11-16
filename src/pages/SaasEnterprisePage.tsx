@@ -217,7 +217,7 @@ const EVENT_FILTERS = [
   { id: 'anomaly', label: '盘中异动' },
   { id: 'cpo_gate', label: 'CPO门控切换' },
   { id: 'pm_shock', label: 'PM预期差突变' },
-  { id: 'paper_fill', label: '模拟盘成交' },
+  { id: 'paper_fill', label: '实盘成交成单' },
 ];
 
 const PLAN_LABELS: Record<SaasPlanTier, string> = {
@@ -264,6 +264,17 @@ export default function SaasEnterprisePage({
   const [orderNote, setOrderNote] = useState('');
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [orderFeedback, setOrderFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [orderType, setOrderType] = useState<'MARKET_IOC' | 'LIMIT'>('MARKET_IOC');
+  const [orderLimitPrice, setOrderLimitPrice] = useState('');
+  const [orderSlippageBps, setOrderSlippageBps] = useState('2.5');
+  const [orderStopLossPrice, setOrderStopLossPrice] = useState('');
+  const [orderTakeProfitPrice, setOrderTakeProfitPrice] = useState('');
+  const [quotePreview, setQuotePreview] = useState<Awaited<ReturnType<typeof api.getOmsQuotePreview>> | null>(null);
+  const [loadingQuotePreview, setLoadingQuotePreview] = useState(false);
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [editingStopPosId, setEditingStopPosId] = useState<string | null>(null);
+  const [editingStopVal, setEditingStopVal] = useState('');
+  const [editingTpVal, setEditingTpVal] = useState('');
 
   // Quick Signals State
   const [quickSignals, setQuickSignals] = useState<QuickSignalItem[]>([]);
@@ -341,7 +352,7 @@ export default function SaasEnterprisePage({
           setSelectedPortfolioId(res.activePortfolio.id);
         }
       } catch (e: unknown) {
-        notify('err', e instanceof Error ? e.message : '加载模拟实盘组合失败');
+        notify('err', e instanceof Error ? e.message : '加载实盘账户组合失败');
       } finally {
         setLoadingPaper(false);
       }
@@ -498,6 +509,32 @@ export default function SaasEnterprisePage({
     loadPaperDesk();
     loadQuickSignals();
   }, []);
+
+  const loadQuotePreview = useCallback(async (sym: string, mkt: 'ashare' | 'futures') => {
+    const clean = sym.trim();
+    if (!clean) return;
+    setLoadingQuotePreview(true);
+    try {
+      const q = await api.getOmsQuotePreview(clean, mkt);
+      setQuotePreview(q);
+      if (q.name && q.name !== clean) {
+        setOrderName(q.name);
+      }
+    } catch {
+      // keep previous preview snapshot on transient network hiccup
+    } finally {
+      setLoadingQuotePreview(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (subTab !== 'paper-desk') return;
+    void loadQuotePreview(orderSymbol, orderMarket);
+    const timer = setInterval(() => {
+      void loadQuotePreview(orderSymbol, orderMarket);
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [subTab, orderSymbol, orderMarket, loadQuotePreview]);
 
   useEffect(() => {
     if (subTab === 'archive-repo') loadArchives(engineFilter);
@@ -709,16 +746,39 @@ export default function SaasEnterprisePage({
     setOrderFeedback(null);
     try {
       const mkt = customPayload?.market ?? orderMarket;
+      const effType = customPayload?.orderType ?? orderType;
+      const limitNum = safeNum(orderLimitPrice, 0);
+      const slNum = safeNum(orderStopLossPrice, 0);
+      const tpNum = safeNum(orderTakeProfitPrice, 0);
+      const slipNum = Math.max(0, Math.min(50, safeNum(orderSlippageBps, 2.5)));
+
       const payload: PaperOrderRequest = {
         portfolioId: selectedPortfolioId || paperDesk?.activePortfolio?.id,
         symbol: (customPayload?.symbol ?? orderSymbol).trim().toUpperCase(),
         name: customPayload?.name ?? (orderName.trim() || undefined),
         market: mkt,
         action: customPayload?.action ?? orderAction,
+        orderType: effType,
         leverage: mkt === 'ashare' ? 1 : customPayload?.leverage ?? orderLeverage,
+        slippageBps: customPayload?.slippageBps ?? slipNum,
         strategyTag: customPayload?.strategyTag ?? orderStrategyTag,
         note: customPayload?.note ?? (orderNote.trim() || '桌面终端实盘委托'),
       };
+      if (customPayload?.price !== undefined) {
+        payload.price = customPayload.price;
+      } else if (effType === 'LIMIT' && limitNum > 0) {
+        payload.price = limitNum;
+      }
+      if (customPayload?.stopLossPrice !== undefined) {
+        payload.stopLossPrice = customPayload.stopLossPrice;
+      } else if (slNum > 0) {
+        payload.stopLossPrice = slNum;
+      }
+      if (customPayload?.takeProfitPrice !== undefined) {
+        payload.takeProfitPrice = customPayload.takeProfitPrice;
+      } else if (tpNum > 0) {
+        payload.takeProfitPrice = tpNum;
+      }
       if (customPayload?.capitalAllocationPct !== undefined) {
         payload.capitalAllocationPct = customPayload.capitalAllocationPct;
       } else if (sizingMode === 'pct') {
@@ -733,7 +793,7 @@ export default function SaasEnterprisePage({
       setOrderFeedback({
         ok: true,
         text: latestOrder
-          ? `成交: ${ACTION_LABEL[latestOrder.action]} ${latestOrder.symbol} ${latestOrder.quantity}${latestOrder.market === 'ashare' ? '股' : '手'} @ ${fmtNum(latestOrder.fillPrice)} (费:${fmtNum(latestOrder.fee)})`
+          ? `成交 [${latestOrder.execId || latestOrder.id}]: ${ACTION_LABEL[latestOrder.action]} ${latestOrder.symbol} ${latestOrder.quantity}${latestOrder.market === 'ashare' ? '股' : '手'} @ ${fmtNum(latestOrder.fillPrice)} (${latestOrder.taxAndFeeDetail || `费:${fmtNum(latestOrder.fee)}`})`
           : '委托执行成功并已写入 SQLite WAL',
       });
       loadDiagnostics();
@@ -747,15 +807,16 @@ export default function SaasEnterprisePage({
     }
   };
 
-  const handleClosePosition = async (pos: PaperPositionItem) => {
+  const handleClosePosition = async (pos: PaperPositionItem, ratio = 1) => {
     setSubmittingOrder(true);
     setOrderFeedback(null);
     try {
-      const res = await api.closePaperPosition(pos.id);
+      const pid = selectedPortfolioId || paperDesk?.activePortfolio?.id;
+      const res = await api.closePaperPosition(pos.id, ratio, pid);
       setPaperDesk(res);
       setOrderFeedback({
         ok: true,
-        text: `已市价平仓 ${pos.symbol} ${pos.name} (${pos.quantity}${pos.market === 'ashare' ? '股' : '手'})`,
+        text: `已市价${ratio < 0.99 ? '半仓平仓(1/2)' : '全额平仓'} ${pos.symbol} ${pos.name}`,
       });
       loadDiagnostics();
     } catch (e: unknown) {
@@ -765,6 +826,42 @@ export default function SaasEnterprisePage({
       });
     } finally {
       setSubmittingOrder(false);
+    }
+  };
+
+  const handleSavePositionStops = async (pos: PaperPositionItem) => {
+    setSubmittingOrder(true);
+    try {
+      const pid = selectedPortfolioId || paperDesk?.activePortfolio?.id;
+      const slVal = editingStopVal.trim() === '' ? null : safeNum(editingStopVal, 0);
+      const tpVal = editingTpVal.trim() === '' ? null : safeNum(editingTpVal, 0);
+      const res = await api.updatePositionStops(pos.id, {
+        portfolioId: pid,
+        stopLossPrice: slVal && slVal > 0 ? slVal : null,
+        takeProfitPrice: tpVal && tpVal > 0 ? tpVal : null,
+      });
+      setPaperDesk(res);
+      setEditingStopPosId(null);
+      setOrderFeedback({ ok: true, text: `已更新 ${pos.symbol} 证伪止损/止盈触发线` });
+    } catch (e: unknown) {
+      setOrderFeedback({ ok: false, text: e instanceof Error ? e.message : '保存止损线失败' });
+    } finally {
+      setSubmittingOrder(false);
+    }
+  };
+
+  const handleSaveOmsPolicy = async (
+    patch: Partial<{ autoFollow4of4: boolean; autoStopLossGuard: boolean; autoAllocPct: number; maxDailyAutoOrders: number; defaultSlippageBps: number }>
+  ) => {
+    setSavingPolicy(true);
+    try {
+      const updated = await api.saveOmsPolicy(patch);
+      setPaperDesk((prev) => (prev ? { ...prev, policy: updated } : prev));
+      notify('ok', 'OMS 自动风控与信号执行策略已保存至 SQLite');
+    } catch (e: unknown) {
+      notify('err', e instanceof Error ? e.message : '保存 OMS 执行策略失败');
+    } finally {
+      setSavingPolicy(false);
     }
   };
 
@@ -779,10 +876,10 @@ export default function SaasEnterprisePage({
       setPaperDesk(res);
       if (res.activePortfolio?.id) setSelectedPortfolioId(res.activePortfolio.id);
       setShowNewPortfolioBar(false);
-      notify('ok', `已创建隔离模拟组合「${newPortfolioName.trim()}」`);
+      notify('ok', `已创建隔离实盘专户「${newPortfolioName.trim()}」`);
       loadDiagnostics();
     } catch (e: unknown) {
-      notify('err', e instanceof Error ? e.message : '新建模拟组合失败');
+      notify('err', e instanceof Error ? e.message : '新建实盘专户失败');
     } finally {
       setLoadingPaper(false);
     }
@@ -862,6 +959,90 @@ export default function SaasEnterprisePage({
       return archiveSortDir === 'desc' ? -cmp : cmp;
     });
   }, [archives, archiveSearch, archiveSortBy, archiveSortDir]);
+
+  const preTradeCalc = useMemo(() => {
+    const refPx =
+      orderType === 'LIMIT' && safeNum(orderLimitPrice, 0) > 0
+        ? safeNum(orderLimitPrice, 0)
+        : safeNum(quotePreview?.lastPrice, 0);
+    const slipBps =
+      orderType === 'LIMIT' ? 0 : Math.max(0, Math.min(50, safeNum(orderSlippageBps, 2.5)));
+    const isBuySide = orderAction === 'buy_long' || orderAction === 'open_short';
+    const slipMult =
+      orderAction === 'buy_long' || orderAction === 'cover_short'
+        ? 1 + slipBps / 10000
+        : 1 - slipBps / 10000;
+    const estFillPx = refPx > 0 ? refPx * slipMult : 0;
+    const eq = Math.max(0, safeNum(paperDesk?.activePortfolio?.totalEquity, 0));
+    const cash = Math.max(0, safeNum(paperDesk?.activePortfolio?.cashBalance, 0));
+    const lev = orderMarket === 'ashare' ? 1 : Math.max(1, orderLeverage);
+    const futuresMult =
+      orderMarket === 'futures' && quotePreview?.multiplier
+        ? quotePreview.multiplier
+        : 1;
+
+    let estQty = 0;
+    if (sizingMode === 'qty') {
+      estQty = Math.max(1, Math.floor(safeNum(orderQty, orderMarket === 'ashare' ? 100 : 1)));
+      if (orderMarket === 'ashare') estQty = Math.max(100, Math.floor(estQty / 100) * 100);
+    } else if (estFillPx > 0 && eq > 0) {
+      const targetCap = (eq * Math.max(1, Math.min(95, safeNum(orderAllocPct, 10)))) / 100;
+      if (orderMarket === 'ashare') {
+        estQty = Math.max(100, Math.floor(targetCap / estFillPx / 100) * 100);
+      } else {
+        estQty = Math.max(1, Math.floor((targetCap * lev) / (estFillPx * futuresMult)));
+      }
+    }
+
+    const notional = estFillPx * estQty * (orderMarket === 'futures' ? futuresMult : 1);
+    const marginOrCost = orderMarket === 'futures' ? notional / lev : notional;
+    const commission =
+      orderMarket === 'ashare'
+        ? notional > 0
+          ? Math.max(5, notional * 0.00025)
+          : 0
+        : estQty * 6;
+    const stampDuty =
+      orderMarket === 'ashare' && orderAction === 'sell_long' ? notional * 0.0005 : 0;
+    const transferFee = orderMarket === 'ashare' ? notional * 0.00001 : 0;
+    const estTotalFee = commission + stampDuty + transferFee;
+    const postTradePct = eq > 0 ? (marginOrCost / eq) * 100 : 0;
+    const slPx = safeNum(orderStopLossPrice, 0);
+    let maxStopRisk = 0;
+    if (slPx > 0 && estFillPx > 0 && estQty > 0 && isBuySide) {
+      const diff =
+        orderAction === 'buy_long'
+          ? Math.max(0, estFillPx - slPx)
+          : Math.max(0, slPx - estFillPx);
+      maxStopRisk = diff * estQty * (orderMarket === 'futures' ? futuresMult : 1);
+    }
+    return {
+      refPx,
+      estFillPx,
+      estQty,
+      marginOrCost,
+      commission,
+      stampDuty,
+      transferFee,
+      estTotalFee,
+      postTradePct,
+      maxStopRisk,
+      overCash: isBuySide && marginOrCost + estTotalFee > cash,
+    };
+  }, [
+    orderType,
+    orderLimitPrice,
+    quotePreview,
+    orderSlippageBps,
+    orderAction,
+    paperDesk?.activePortfolio,
+    orderMarket,
+    orderLeverage,
+    sizingMode,
+    orderQty,
+    orderAllocPct,
+    orderStopLossPrice,
+  ]);
 
   const toggleArchiveSort = (col: typeof archiveSortBy) => {
     if (archiveSortBy === col) {
@@ -1044,7 +1225,7 @@ export default function SaasEnterprisePage({
       notify(
         'ok',
         authMode === 'register'
-          ? `已注册并登录新隔离租户「${res.user.displayName}」，已自动初始化专属自选股与模拟盘组合`
+          ? `已注册并登录新隔离租户「${res.user.displayName}」，已自动初始化专属自选股与OMS实盘专户`
           : `登录成功: ${res.user.displayName}`
       );
     } catch (e: unknown) {
@@ -1106,7 +1287,7 @@ export default function SaasEnterprisePage({
             onClick={() => setSubTab('paper-desk')}
             className={`w-tab ${subTab === 'paper-desk' ? 'w-tab-active' : ''}`}
           >
-            [01] 策略模拟实盘组合舱
+            [01] OMS 实盘交易柜台与风控执行舱
           </button>
           <button
             type="button"
@@ -1224,7 +1405,7 @@ export default function SaasEnterprisePage({
                 className="h-[24px] px-2 bg-[#161b24] border border-[#2b3444] hover:border-[#ff8800] text-[11px] text-[#ff8800] flex items-center gap-1"
               >
                 <Plus className="w-3 h-3" />
-                新建模拟组合
+                新建实盘专户
               </button>
 
               <button
@@ -1245,7 +1426,7 @@ export default function SaasEnterprisePage({
                 onClick={() =>
                   downloadWithAuth(
                     api.getPaperOrdersCsvUrl(selectedPortfolioId || activePortfolio?.id),
-                    `paper_orders_${activePortfolio?.id || 'desk'}.csv`
+                    `oms_orders_${activePortfolio?.id || 'desk'}.csv`
                   ).catch((err) => notify('err', err.message))
                 }
                 className="h-[24px] px-2 bg-[#161b24] border border-[#2b3444] hover:border-[#4da3ff] text-[11px] text-[#4da3ff] flex items-center gap-1"
@@ -1309,6 +1490,71 @@ export default function SaasEnterprisePage({
               </button>
             </div>
           )}
+
+          {/* OMS Auto-Execution & Stop-Loss Guard Policy Bar */}
+          <div className="bg-[#11151d] px-2.5 py-1 flex flex-wrap items-center justify-between gap-2 border-b border-[#222832] text-[11px] shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[#ff8800] font-bold">OMS 风控守护策略:</span>
+              <button
+                type="button"
+                disabled={savingPolicy}
+                onClick={() =>
+                  handleSaveOmsPolicy({
+                    autoFollow4of4: !(paperDesk?.policy?.autoFollow4of4 ?? false),
+                  })
+                }
+                className={`px-2 h-[20px] border text-[10px] font-semibold ${
+                  paperDesk?.policy?.autoFollow4of4
+                    ? 'bg-[#211508] border-[#ff8800] text-[#ff8800]'
+                    : 'bg-[#161b24] border-[#2b3444] text-[#8b95a5] hover:text-[#dfe6f0]'
+                }`}
+              >
+                4/4买点自动跟单: {paperDesk?.policy?.autoFollow4of4 ? '已开启' : '关闭'}
+              </button>
+              <div className="flex items-center gap-1 text-[10px] text-[#8b95a5]">
+                <span>单笔配比:</span>
+                {[5, 10, 15, 20].map((pct) => {
+                  const active = Math.round(paperDesk?.policy?.autoAllocPct ?? 10) === pct;
+                  return (
+                    <button
+                      key={pct}
+                      type="button"
+                      disabled={savingPolicy}
+                      onClick={() => handleSaveOmsPolicy({ autoAllocPct: pct })}
+                      className={`px-1.5 h-[20px] border tabular-nums ${
+                        active
+                          ? 'bg-[#ff8800] border-[#ff8800] text-[#090c10] font-bold'
+                          : 'bg-[#161b24] border-[#252c38] text-[#9aa5b5] hover:border-[#ff8800]'
+                      }`}
+                    >
+                      {pct}%
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                disabled={savingPolicy}
+                onClick={() =>
+                  handleSaveOmsPolicy({
+                    autoStopLossGuard: !(paperDesk?.policy?.autoStopLossGuard ?? true),
+                  })
+                }
+                className={`px-2 h-[20px] border text-[10px] font-semibold ${
+                  (paperDesk?.policy?.autoStopLossGuard ?? true)
+                    ? 'bg-[#0b1f16] border-[#00c853] text-[#00c853]'
+                    : 'bg-[#211013] border-[#ff3535] text-[#ff3535]'
+                }`}
+              >
+                证伪止损熔断: {(paperDesk?.policy?.autoStopLossGuard ?? true) ? 'GUARD ON' : 'OFF'}
+              </button>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-[#7d8796] tabular-nums">
+              <span>日限跟单: {paperDesk?.policy?.maxDailyAutoOrders ?? 3} 笔</span>
+              <span>·</span>
+              <span>默认滑点: {fmtNum(paperDesk?.policy?.defaultSlippageBps ?? 1.5, 1)} bps</span>
+            </div>
+          </div>
 
           {/* 8-Cell Wind MTM KPI Strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-[1px] bg-[#222832] shrink-0">
@@ -1385,6 +1631,7 @@ export default function SaasEnterprisePage({
                         <th className="text-right">实时最新价</th>
                         <th className="text-right">浮动盈亏</th>
                         <th className="text-right">盈亏比例%</th>
+                        <th className="text-right">证伪止损 / 缓冲%</th>
                         <th className="text-left">策略来源标签</th>
                         <th className="text-center">平仓操作</th>
                       </tr>
@@ -1392,13 +1639,16 @@ export default function SaasEnterprisePage({
                     <tbody>
                       {(paperDesk?.positions || []).length === 0 ? (
                         <tr>
-                          <td colSpan={10} className="text-center py-6 text-[#6d7787]">
-                            当前组合暂无持仓 — 可在右侧委托单直接下单或一键导入策略信号建仓
+                          <td colSpan={11} className="text-center py-6 text-[#6d7787]">
+                            当前专户暂无持仓 — 可在右侧委托单直接下单或一键导入策略信号建仓
                           </td>
                         </tr>
                       ) : (
                         (paperDesk?.positions || []).map((pos) => {
                           const isLockedT1 = pos.market === 'ashare' && pos.availableQuantity <= 0;
+                          const canHalfClose =
+                            !isLockedT1 && pos.quantity >= (pos.market === 'ashare' ? 200 : 2);
+                          const isEditingStops = editingStopPosId === pos.id;
                           return (
                             <tr key={pos.id}>
                               <td>
@@ -1453,25 +1703,110 @@ export default function SaasEnterprisePage({
                               <td className={`text-right tabular-nums font-semibold ${colorUpDown(pos.unrealizedPnlPct)}`}>
                                 {fmtPct(pos.unrealizedPnlPct)}
                               </td>
+                              <td className="text-right tabular-nums">
+                                {isEditingStops ? (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder="止损"
+                                      value={editingStopVal}
+                                      onChange={(e) => setEditingStopVal(e.target.value)}
+                                      className="w-16 h-[20px] px-1 bg-[#090c10] border border-[#ff8800] text-[10px] text-[#f0b90b]"
+                                    />
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder="止盈"
+                                      value={editingTpVal}
+                                      onChange={(e) => setEditingTpVal(e.target.value)}
+                                      className="w-16 h-[20px] px-1 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#00c853]"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSavePositionStops(pos)}
+                                      className="px-1.5 h-[20px] bg-[#ff8800] text-[#090c10] text-[10px] font-bold"
+                                    >
+                                      存
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingStopPosId(null)}
+                                      className="px-1 h-[20px] bg-[#161b24] border border-[#2b3444] text-[#8b95a5] text-[10px]"
+                                    >
+                                      x
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1">
+                                    {pos.stopLossPrice ? (
+                                      <span
+                                        className={
+                                          (pos.distanceToStopPct ?? 99) < 2
+                                            ? 'text-[#ff3535] font-semibold'
+                                            : 'text-[#f0b90b]'
+                                        }
+                                        title={
+                                          pos.takeProfitPrice
+                                            ? `目标止盈: ${fmtNum(pos.takeProfitPrice, 2)}`
+                                            : '证伪止损触发价'
+                                        }
+                                      >
+                                        {fmtNum(pos.stopLossPrice, 2)}
+                                        {pos.distanceToStopPct !== null &&
+                                          pos.distanceToStopPct !== undefined && (
+                                            <span className="ml-1 text-[10px] text-[#8b95a5]">
+                                              ({pos.distanceToStopPct.toFixed(1)}%)
+                                            </span>
+                                          )}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[#5d6777] text-[10px]">未设</span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingStopPosId(pos.id);
+                                        setEditingStopVal(pos.stopLossPrice ? String(pos.stopLossPrice) : '');
+                                        setEditingTpVal(pos.takeProfitPrice ? String(pos.takeProfitPrice) : '');
+                                      }}
+                                      className="px-1 py-0.5 text-[9px] bg-[#161b24] border border-[#2b3444] hover:border-[#ff8800] text-[#8b95a5] hover:text-[#ff8800]"
+                                    >
+                                      设止损
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
                               <td>
                                 <span className="px-1.5 py-0.5 text-[10px] bg-[#161b24] border border-[#252c38] text-[#4da3ff]">
                                   {pos.strategyTag || '手工交易'}
                                 </span>
                               </td>
-                              <td className="text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handleClosePosition(pos)}
-                                  disabled={submittingOrder}
-                                  title={isLockedT1 ? '今日买入A股T+1锁仓(点击可验证服务端风控拦截)' : '按实时市价全额平仓'}
-                                  className={`px-2 py-0.5 text-[10px] border ${
-                                    isLockedT1
-                                      ? 'bg-[#1a1510] border-[#4d3518] text-[#f0b90b] hover:border-[#ff3535]'
-                                      : 'bg-[#161b24] border-[#2b3444] text-[#dfe6f0] hover:border-[#ff8800] hover:text-[#ff8800]'
-                                  }`}
-                                >
-                                  市价平仓
-                                </button>
+                              <td className="text-center whitespace-nowrap">
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleClosePosition(pos, 0.5)}
+                                    disabled={submittingOrder || !canHalfClose}
+                                    title={canHalfClose ? '按实时市价平掉 1/2 仓位' : '当前持仓不足半仓或T+1锁仓'}
+                                    className="px-1.5 py-0.5 text-[10px] border bg-[#161b24] border-[#2b3444] text-[#e5b567] hover:border-[#ff8800] disabled:opacity-40"
+                                  >
+                                    平1/2
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleClosePosition(pos, 1)}
+                                    disabled={submittingOrder}
+                                    title={isLockedT1 ? '今日买入A股T+1锁仓(点击可验证服务端风控拦截)' : '按实时市价全额平仓'}
+                                    className={`px-1.5 py-0.5 text-[10px] border ${
+                                      isLockedT1
+                                        ? 'bg-[#1a1510] border-[#4d3518] text-[#f0b90b] hover:border-[#ff3535]'
+                                        : 'bg-[#161b24] border-[#2b3444] text-[#dfe6f0] hover:border-[#ff8800] hover:text-[#ff8800]'
+                                    }`}
+                                  >
+                                    全平
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1504,11 +1839,12 @@ export default function SaasEnterprisePage({
                       <thead>
                         <tr>
                           <th className="text-left">成交时间</th>
+                          <th className="text-left">合同 / 类型</th>
                           <th className="text-left">代码 / 名称</th>
                           <th className="text-left">买卖方向</th>
-                          <th className="text-right">成交价</th>
+                          <th className="text-right">成交价 / 滑点</th>
                           <th className="text-right">数量</th>
-                          <th className="text-right">手续费+税</th>
+                          <th className="text-right">税费明细</th>
                           <th className="text-right">实现盈亏</th>
                           <th className="text-left">信号备注</th>
                         </tr>
@@ -1516,7 +1852,7 @@ export default function SaasEnterprisePage({
                       <tbody>
                         {(paperDesk?.orders || []).length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="text-center py-6 text-[#6d7787]">
+                            <td colSpan={9} className="text-center py-6 text-[#6d7787]">
                               暂无成交流水
                             </td>
                           </tr>
@@ -1524,6 +1860,22 @@ export default function SaasEnterprisePage({
                           (paperDesk?.orders || []).map((ord) => (
                             <tr key={ord.id}>
                               <td className="text-[#8b95a5] tabular-nums text-[11px]">{shortTime(ord.createdAt)}</td>
+                              <td className="tabular-nums text-[10px]">
+                                <div className="text-[#cfd8e3] font-semibold">{ord.execId || `ORD-${ord.id}`}</div>
+                                <span
+                                  className={`px-1 border text-[9px] ${
+                                    ord.orderType === 'AUTO_GUARD'
+                                      ? 'bg-[#211013] border-[#ff3535] text-[#ff3535]'
+                                      : ord.orderType === 'AUTO_SIGNAL'
+                                      ? 'bg-[#211508] border-[#ff8800] text-[#ff8800]'
+                                      : ord.orderType === 'LIMIT'
+                                      ? 'bg-[#0e1b29] border-[#4da3ff] text-[#4da3ff]'
+                                      : 'bg-[#161b24] border-[#2b3444] text-[#8b95a5]'
+                                  }`}
+                                >
+                                  {ord.orderType || 'MARKET_IOC'}
+                                </span>
+                              </td>
                               <td>
                                 <span className="text-[#e5b567] font-semibold mr-1">{ord.symbol}</span>
                                 <span className="text-[#cfd8e3]">{ord.name}</span>
@@ -1539,13 +1891,28 @@ export default function SaasEnterprisePage({
                                   {ACTION_LABEL[ord.action] || ord.action}
                                 </span>
                               </td>
-                              <td className="text-right tabular-nums">{fmtNum(ord.fillPrice, 3)}</td>
+                              <td className="text-right tabular-nums">
+                                <div>{fmtNum(ord.fillPrice, 3)}</div>
+                                <div className="text-[9px] text-[#7d8796]">
+                                  {fmtNum(ord.slippageBps ?? 0, 1)}bps
+                                </div>
+                              </td>
                               <td className="text-right tabular-nums">{ord.quantity}</td>
-                              <td className="text-right tabular-nums text-[#f0b90b]">{fmtNum(ord.fee, 2)}</td>
+                              <td
+                                className="text-right tabular-nums text-[#f0b90b]"
+                                title={ord.taxAndFeeDetail || `合计费税 ${fmtNum(ord.fee, 2)}`}
+                              >
+                                <div>{fmtNum(ord.fee, 2)}</div>
+                                {ord.taxAndFeeDetail && (
+                                  <div className="text-[9px] text-[#7d8796] max-w-[115px] truncate ml-auto">
+                                    {ord.taxAndFeeDetail}
+                                  </div>
+                                )}
+                              </td>
                               <td className={`text-right tabular-nums font-semibold ${colorUpDown(ord.realizedPnl)}`}>
                                 {ord.realizedPnl === 0 ? '--' : fmtSignedCurrency(ord.realizedPnl)}
                               </td>
-                              <td className="text-[#8b95a5] text-[11px] max-w-[200px] truncate" title={`${ord.strategyTag} · ${ord.note}`}>
+                              <td className="text-[#8b95a5] text-[11px] max-w-[180px] truncate" title={`${ord.strategyTag} · ${ord.note}`}>
                                 <span className="text-[#4da3ff] mr-1">[{ord.strategyTag}]</span>
                                 {ord.note}
                               </td>
@@ -1559,11 +1926,11 @@ export default function SaasEnterprisePage({
               </div>
             </div>
 
-            {/* Right Docked Order Ticket + Quick Signal Launcher */}
-            <div className="w-full lg:w-[310px] shrink-0 bg-[#0e1117] flex flex-col overflow-hidden">
+            {/* Right Docked Order Ticket + Live 5-Gear Book + Quick Signal Launcher */}
+            <div className="w-full lg:w-[328px] shrink-0 bg-[#0e1117] flex flex-col overflow-hidden">
               <PaneHeader
-                title="Wind 交易委托单面板"
-                badge={orderMarket === 'ashare' ? 'A股T+1' : '期货T+0'}
+                title="OMS 实盘委托报单台"
+                badge={`${orderMarket === 'ashare' ? 'A股T+1' : '期货T+0'} · ${orderType === 'LIMIT' ? '限价' : '五档IOC'}`}
               />
 
               <div className="p-2.5 space-y-2 border-b border-[#222832] overflow-y-auto shrink-0">
@@ -1623,7 +1990,14 @@ export default function SaasEnterprisePage({
                 <div>
                   <div className="flex items-center justify-between text-[10px] text-[#8b95a5] mb-1">
                     <span>交易标的 (代码 / 名称)</span>
-                    <span className="text-[#e5b567]">市价即时撮合</span>
+                    <button
+                      type="button"
+                      onClick={() => void loadQuotePreview(orderSymbol, orderMarket)}
+                      className="text-[#e5b567] hover:text-[#ff8800] flex items-center gap-1"
+                    >
+                      <RefreshCw className={`w-2.5 h-2.5 ${loadingQuotePreview ? 'animate-spin' : ''}`} />
+                      {orderType === 'LIMIT' ? '限价委托' : '五档IOC撮合'}
+                    </button>
                   </div>
                   <div className="grid grid-cols-12 gap-1">
                     <input
@@ -1669,6 +2043,138 @@ export default function SaasEnterprisePage({
                       </button>
                     ))}
                   </div>
+
+                  {/* Live 5-Gear Order Book */}
+                  {quotePreview && quotePreview.lastPrice > 0 && (
+                    <div className="mt-1.5 bg-[#0a0d12] border border-[#222832] p-1.5 text-[10px] tabular-nums">
+                      <div className="flex items-center justify-between pb-1 border-b border-[#1c222d] mb-1">
+                        <span className="text-[#8b95a5]">
+                          现价{' '}
+                          <span className="text-[#f0b90b] font-bold">
+                            {fmtNum(quotePreview.lastPrice, quotePreview.tickSize < 0.05 ? 3 : 2)}
+                          </span>
+                        </span>
+                        <div className="flex items-center gap-2 text-[9px]">
+                          {quotePreview.upperLimit > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOrderType('LIMIT');
+                                setOrderLimitPrice(String(quotePreview.upperLimit));
+                              }}
+                              className="text-[#ff3535] hover:underline"
+                            >
+                              涨停 {fmtNum(quotePreview.upperLimit, 2)}
+                            </button>
+                          )}
+                          {quotePreview.lowerLimit > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOrderType('LIMIT');
+                                setOrderLimitPrice(String(quotePreview.lowerLimit));
+                              }}
+                              className="text-[#00c853] hover:underline"
+                            >
+                              跌停 {fmtNum(quotePreview.lowerLimit, 2)}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div className="space-y-0.5">
+                          {(quotePreview.asks || []).slice(0, 5).map((lvl) => (
+                            <button
+                              key={`a-${lvl.level}`}
+                              type="button"
+                              onClick={() => {
+                                setOrderType('LIMIT');
+                                setOrderLimitPrice(String(lvl.price));
+                              }}
+                              className="w-full flex items-center justify-between px-1 hover:bg-[#161b24]"
+                              title="点击填入限价单"
+                            >
+                              <span className="text-[#7d8796]">卖{lvl.level}</span>
+                              <span className="text-[#00c853]">{fmtNum(lvl.price, 2)}</span>
+                              <span className="text-[#8b95a5]">{lvl.volume}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="space-y-0.5">
+                          {(quotePreview.bids || []).slice(0, 5).map((lvl) => (
+                            <button
+                              key={`b-${lvl.level}`}
+                              type="button"
+                              onClick={() => {
+                                setOrderType('LIMIT');
+                                setOrderLimitPrice(String(lvl.price));
+                              }}
+                              className="w-full flex items-center justify-between px-1 hover:bg-[#161b24]"
+                              title="点击填入限价单"
+                            >
+                              <span className="text-[#7d8796]">买{lvl.level}</span>
+                              <span className="text-[#ff3535]">{fmtNum(lvl.price, 2)}</span>
+                              <span className="text-[#8b95a5]">{lvl.volume}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Order Type (MARKET_IOC / LIMIT) + Slippage */}
+                <div className="grid grid-cols-12 gap-1 items-center">
+                  <div className="col-span-6 grid grid-cols-2 border border-[#222832]">
+                    <button
+                      type="button"
+                      onClick={() => setOrderType('MARKET_IOC')}
+                      className={`h-[22px] text-[10px] font-semibold ${
+                        orderType === 'MARKET_IOC'
+                          ? 'bg-[#ff8800] text-[#090c10]'
+                          : 'bg-[#161b24] text-[#8b95a5]'
+                      }`}
+                    >
+                      五档IOC
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrderType('LIMIT');
+                        if (!orderLimitPrice && quotePreview?.lastPrice) {
+                          setOrderLimitPrice(String(quotePreview.lastPrice));
+                        }
+                      }}
+                      className={`h-[22px] text-[10px] font-semibold ${
+                        orderType === 'LIMIT'
+                          ? 'bg-[#4da3ff] text-[#090c10]'
+                          : 'bg-[#161b24] text-[#8b95a5]'
+                      }`}
+                    >
+                      限价LIMIT
+                    </button>
+                  </div>
+                  {orderType === 'LIMIT' ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={orderLimitPrice}
+                      onChange={(e) => setOrderLimitPrice(e.target.value)}
+                      placeholder="限价价格"
+                      className="col-span-6 h-[22px] px-1.5 bg-[#090c10] border border-[#4da3ff] text-[10px] text-[#4da3ff] tabular-nums focus:outline-none"
+                    />
+                  ) : (
+                    <div className="col-span-6 flex items-center gap-1 text-[10px] text-[#8b95a5]">
+                      <span className="shrink-0">滑点(bps)</span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={orderSlippageBps}
+                        onChange={(e) => setOrderSlippageBps(e.target.value)}
+                        className="w-full h-[22px] px-1.5 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#e5b567] tabular-nums focus:outline-none focus:border-[#ff8800]"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Quantity / Allocation % */}
@@ -1765,6 +2271,39 @@ export default function SaasEnterprisePage({
                   )}
                 </div>
 
+                {/* Pre-set StopLoss & TakeProfit */}
+                <div className="grid grid-cols-12 gap-1 items-center">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={orderStopLossPrice}
+                    onChange={(e) => setOrderStopLossPrice(e.target.value)}
+                    placeholder="证伪止损价(选填)"
+                    className="col-span-4 h-[23px] px-1.5 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#f0b90b] tabular-nums focus:outline-none focus:border-[#ff8800]"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={orderTakeProfitPrice}
+                    onChange={(e) => setOrderTakeProfitPrice(e.target.value)}
+                    placeholder="目标止盈价"
+                    className="col-span-4 h-[23px] px-1.5 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#00c853] tabular-nums focus:outline-none focus:border-[#ff8800]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const basePx = preTradeCalc.refPx > 0 ? preTradeCalc.refPx : safeNum(quotePreview?.lastPrice, 0);
+                      if (basePx > 0) {
+                        const mult = orderAction === 'open_short' ? 1.045 : 0.955;
+                        setOrderStopLossPrice((basePx * mult).toFixed(2));
+                      }
+                    }}
+                    className="col-span-4 h-[23px] px-1 bg-[#161b24] border border-[#2b3444] hover:border-[#ff8800] text-[10px] text-[#e5b567]"
+                  >
+                    按-4.5%设止损
+                  </button>
+                </div>
+
                 {/* Strategy Tag & Note */}
                 <div className="grid grid-cols-2 gap-1">
                   <select
@@ -1786,6 +2325,38 @@ export default function SaasEnterprisePage({
                     className="h-[25px] px-1.5 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#dfe6f0] focus:outline-none focus:border-[#ff8800]"
                   />
                 </div>
+
+                {/* Pre-Trade穿透风控试算卡 */}
+                {preTradeCalc.estFillPx > 0 && (
+                  <div className="bg-[#0b0e14] border border-[#222832] px-2 py-1 text-[10px] tabular-nums space-y-0.5">
+                    <div className="flex items-center justify-between text-[#8b95a5]">
+                      <span>预估均价 / 量</span>
+                      <span className="text-[#dfe6f0]">
+                        {fmtNum(preTradeCalc.estFillPx, 3)} × {preTradeCalc.estQty}
+                        {orderMarket === 'ashare' ? '股' : '手'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[#8b95a5]">
+                      <span>动用资金 / 占净值</span>
+                      <span className={preTradeCalc.overCash ? 'text-[#ff3535] font-bold' : 'text-[#e5b567]'}>
+                        ¥{fmtNum(preTradeCalc.marginOrCost, 0)} ({preTradeCalc.postTradePct.toFixed(1)}%)
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[#8b95a5]">
+                      <span>预估费税明细</span>
+                      <span className="text-[#f0b90b]">
+                        ¥{fmtNum(preTradeCalc.estTotalFee, 2)} (佣{fmtNum(preTradeCalc.commission, 1)}
+                        {preTradeCalc.stampDuty > 0 ? `+印${fmtNum(preTradeCalc.stampDuty, 1)}` : ''})
+                      </span>
+                    </div>
+                    {preTradeCalc.maxStopRisk > 0 && (
+                      <div className="flex items-center justify-between text-[#8b95a5]">
+                        <span>止损最大回撤风险</span>
+                        <span className="text-[#ff3535]">-¥{fmtNum(preTradeCalc.maxStopRisk, 0)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Submit Order Button */}
                 <button
@@ -2591,7 +3162,7 @@ export default function SaasEnterprisePage({
             {/* Multi-Tenant Seat Isolation */}
             <div className="bg-[#0e1117] flex flex-col shrink-0">
               <PaneHeader
-                title="多租户席位隔离与账号中心 (自选股/模拟盘/归档/Webhook 100% 物理隔离)"
+                title="多租户席位隔离与账号中心 (自选股/OMS实盘专户/归档/Webhook 100% 物理隔离)"
                 badge={currentUser ? currentUser.planTier.toUpperCase() : 'SAAS'}
               />
               <div className="p-2.5 space-y-2.5">
@@ -2721,7 +3292,7 @@ export default function SaasEnterprisePage({
                     {authBusy
                       ? '处理中...'
                       : authMode === 'register'
-                      ? '立即创建独立租户并初始化模拟组合'
+                      ? '立即创建独立租户并初始化实盘专户'
                       : '登录并切换租户会话'}
                   </button>
                 </form>

@@ -288,7 +288,7 @@ export function registerSaasUser(payload: {
     tx.prepare(`
       INSERT INTO paper_portfolios (id, user_id, name, initial_capital, cash_balance, realized_pnl, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(pfId, userId, `${displayName || username} 模拟舱`, initialCap, initialCap, 0, createdAt);
+    `).run(pfId, userId, `${displayName || username} 实盘专户`, initialCap, initialCap, 0, createdAt);
 
     tx.prepare(`
       INSERT INTO paper_nav_points (portfolio_id, timestamp, total_equity, return_pct, cash_balance)
@@ -425,7 +425,7 @@ export function getSqliteDiagnostics(
   const exeExists = Boolean(process.env.TSP_ELECTRON_SHELL === '1' || fs.existsSync(exePath));
 
   return {
-    version: 'v1.1.0-enterprise',
+    version: 'v1.2.0-enterprise',
     dbPath: DB_PATH,
     journalMode,
     dbSizeBytes,

@@ -38,6 +38,8 @@ import type {
   MonitorAnomaliesResponse,
   MonitorRule,
   MonitorRulesResponse,
+  OmsExecutionPolicy,
+  OmsQuotePreviewResponse,
   PandaFactorScanRequest,
   PandaFactorScanResponse,
   PandaPmOverviewResponse,
@@ -301,7 +303,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  // ================= V6: SaaS 多租户 · 模拟实盘舱 · 归档 · Webhook · 实时流 =================
+  // ================= V6–V8: SaaS 多租户 · 机构OMS实盘交易柜台 · 归档 · Webhook · 实时流 =================
 
   getSaasDiagnostics: () => request<SaasSystemDiagnostics>('/api/saas/diagnostics'),
 
@@ -362,10 +364,40 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  closePaperPosition: (positionId: string) =>
+  getOmsQuotePreview: (symbol: string, market?: 'ashare' | 'futures') =>
+    request<OmsQuotePreviewResponse>(
+      '/api/paper/quote-preview?symbol=' +
+        encodeURIComponent(symbol) +
+        (market ? '&market=' + encodeURIComponent(market) : '')
+    ),
+
+  getOmsPolicy: () => request<OmsExecutionPolicy>('/api/paper/policy'),
+
+  saveOmsPolicy: (patch: Partial<OmsExecutionPolicy>) =>
+    request<OmsExecutionPolicy>('/api/paper/policy', {
+      method: 'POST',
+      body: JSON.stringify(patch),
+    }),
+
+  closePaperPosition: (positionId: string, ratio = 1, portfolioId?: string) =>
     request<PaperDeskOverviewResponse>(
       '/api/paper/positions/' + encodeURIComponent(positionId) + '/close',
-      { method: 'POST' }
+      {
+        method: 'POST',
+        body: JSON.stringify({ ratio, portfolioId }),
+      }
+    ),
+
+  updatePositionStops: (
+    positionId: string,
+    payload: { stopLossPrice?: number | null; takeProfitPrice?: number | null; portfolioId?: string }
+  ) =>
+    request<PaperDeskOverviewResponse>(
+      '/api/paper/positions/' + encodeURIComponent(positionId) + '/stops',
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
     ),
 
   getPaperOrdersCsvUrl: (portfolioId?: string) => {

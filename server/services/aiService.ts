@@ -26,7 +26,7 @@ export async function chatWithAi(
     try {
       const endpoint = `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`;
       const modelName = cfg.model === 'deepseek-flash' ? 'deepseek-chat' : cfg.model;
-      const systemPrompt = `你是 TICK STOCK PANEL Pro (天才交易员改造工作台 v0.3.7-pro) 的 A股量化与游资实战 AI 赛博研究员。
+      const systemPrompt = `你是 TICK STOCK PANEL Pro (天才交易员量化交易终端 v1.2.0-enterprise) 的 A股量化与游资实战 AI 赛博研究员。
 请严格遵循 A股 **红涨绿跌** 和 **T+1** 规则，基于以下实时实盘数据回答，禁止编造价格或涨跌幅：
 
 ${liveBrief}

@@ -49,11 +49,30 @@ const VALID_NAV_TABS = new Set<NavTabId>([
   'saas-desk',
 ]);
 
+declare global {
+  interface Window {
+    tspDesktop?: {
+      isElectron?: boolean;
+      platform?: string;
+      version?: string;
+      toggleAlwaysOnTop?: () => Promise<boolean>;
+      openExternal?: (url: string) => Promise<boolean>;
+      navigateTab?: (tab: string) => void;
+      openPopout?: (tab: string, alwaysOnTop?: boolean) => Promise<boolean>;
+    };
+  }
+}
+
 function getInitialTabFromUrl(): NavTabId {
   if (typeof window === 'undefined') return 'dashboard';
   const param = new URLSearchParams(window.location.search).get('tab') as NavTabId | null;
   if (param && VALID_NAV_TABS.has(param)) return param;
   return 'dashboard';
+}
+
+function getIsPopoutFromUrl(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get('popout') === '1';
 }
 
 interface TopRibbonTab {
@@ -98,7 +117,7 @@ const TOP_RIBBON_TABS: TopRibbonTab[] = [
   },
   {
     keyLabel: '实盘',
-    label: '模拟舱/SaaS',
+    label: 'OMS实盘/SaaS',
     tabs: ['saas-desk'],
     primaryTab: 'saas-desk',
     isAlpha: true,
@@ -175,6 +194,7 @@ class PageErrorBoundary extends React.Component<
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTabId>(getInitialTabFromUrl);
+  const [isPopout] = useState<boolean>(getIsPopoutFromUrl);
   const [selectedStock, setSelectedStock] = useState<{
     code: string;
     name?: string;
@@ -648,7 +668,7 @@ export default function App() {
       <header className="h-[28px] shrink-0 bg-[#141923] border-b border-[#222832] flex items-center justify-between select-none z-30">
         <div className="flex items-center h-full min-w-0 overflow-x-auto">
           <div className="h-full px-2.5 bg-[#ff8800] text-[#090c10] font-bold text-[11px] flex items-center shrink-0 tracking-tight">
-            W·TSP 终端
+            {isPopout ? 'W·TSP 独立副屏' : 'W·TSP 终端'}
           </div>
 
           <nav className="flex items-center h-full">
@@ -700,7 +720,7 @@ export default function App() {
             <button
               onClick={() => setSeatMenuOpen((v) => !v)}
               className="h-full px-2 bg-[#111620] hover:bg-[#18202e] text-[10px] font-mono border-r border-[#222832] flex items-center gap-1.5 whitespace-nowrap"
-              title="点击切换演示席位或进入模拟舱/SaaS"
+              title="点击切换机构席位或进入 OMS 实盘/SaaS"
             >
               <span className="text-[#9aa5b5]">席位:</span>
               <span className="text-[#e5b567] font-semibold">
@@ -766,7 +786,7 @@ export default function App() {
                   }}
                   className="w-full h-[26px] px-2.5 bg-[#0e1117] hover:bg-[#1b2434] border-t border-[#222832] text-[#4da3ff] text-left font-mono"
                 >
-                  打开模拟实盘与 SaaS 管理中枢 &gt;
+                  打开 OMS 实盘交易柜台与 SaaS &gt;
                 </button>
               </div>
             )}
@@ -801,6 +821,24 @@ export default function App() {
             title="显示/隐藏顶部跨维作战联立条 (付鹏FICC / CPO五节点 / 4/4买点 / 后台抓取状态)"
           >
             [作战条]
+          </button>
+
+          <button
+            onClick={() => {
+              if (window.tspDesktop?.openPopout) {
+                void window.tspDesktop.openPopout(activeTab, false);
+              } else {
+                window.open(
+                  `${window.location.origin}/?popout=1&tab=${encodeURIComponent(activeTab)}`,
+                  '_blank',
+                  'noopener,width=1320,height=840'
+                );
+              }
+            }}
+            className="h-full px-2 bg-[#111620] hover:bg-[#1b2434] text-[10px] font-mono text-[#e5b567] border-r border-[#222832] whitespace-nowrap"
+            title="将当前工作区拆出独立多屏副窗口 (?popout=1)"
+          >
+            [拆窗副屏]
           </button>
 
           <button
@@ -926,24 +964,31 @@ export default function App() {
             <span className="text-[#00c853]">
               自动抓取 {commandStrip?.activeJobsOk ?? 0}/{commandStrip?.totalJobs ?? 5} 守护
             </span>
+            {commandStrip?.sessionLabel && (
+              <span className="px-1 py-0.5 bg-[#161b24] border border-[#222832] text-[#e5b567] text-[9px]">
+                {commandStrip.sessionLabel}
+              </span>
+            )}
             <span className="text-[#6d7787]">· 同步 {lastSyncClock}</span>
           </button>
         </div>
       )}
 
-      {/* Main Middle Area: 44px Rail + Edge-to-Edge Workspace */}
+      {/* Main Middle Area: 44px Rail (hidden in popout) + Edge-to-Edge Workspace */}
       <div className="flex-1 min-h-0 flex">
-        <Sidebar
-          activeTab={activeTab}
-          onSelectTab={setActiveTab}
-          health={health}
-          indices={indices}
-          liveEnabled={liveEnabled}
-          onToggleLive={() => setLiveEnabled((v) => !v)}
-          onOpenAi={() => setAiOpen(true)}
-          onRefreshData={() => setRefreshNonce((n) => n + 1)}
-          onSelectStock={(code, name) => handleSelectStock(code, name)}
-        />
+        {!isPopout && (
+          <Sidebar
+            activeTab={activeTab}
+            onSelectTab={setActiveTab}
+            health={health}
+            indices={indices}
+            liveEnabled={liveEnabled}
+            onToggleLive={() => setLiveEnabled((v) => !v)}
+            onOpenAi={() => setAiOpen(true)}
+            onRefreshData={() => setRefreshNonce((n) => n + 1)}
+            onSelectStock={(code, name) => handleSelectStock(code, name)}
+          />
+        )}
 
         <main className="flex-1 min-w-0 h-full overflow-y-auto bg-[#090c10]">
           <PageErrorBoundary resetKey={activeTab}>

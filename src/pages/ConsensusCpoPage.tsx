@@ -742,7 +742,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
         const eq = res.activePortfolio?.totalEquity;
         setPaperToast({
           ok: true,
-          text: `已转入模拟实盘舱 [${res.activePortfolio?.name || '主组合'}]: ${cleanSymbol} ${
+          text: `已直通 OMS 实盘专户 [${res.activePortfolio?.name || '主组合'}]: ${cleanSymbol} ${
             opts.name || ''
           } (${resolvedAction === 'open_short' ? '开仓做空' : resolvedAction === 'sell_long' ? '卖出平多' : '买入做多'}, 仓位约${
             opts.capitalAllocationPct ?? 12
@@ -751,7 +751,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
       } catch (e: unknown) {
         setPaperToast({
           ok: false,
-          text: `模拟实盘下单失败 (${cleanSymbol}): ${e instanceof Error ? e.message : '未知错误'}`,
+          text: `实盘下单失败 (${cleanSymbol}): ${e instanceof Error ? e.message : '未知错误'}`,
         });
       } finally {
         setPaperOrderKey(null);
@@ -1324,7 +1324,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
                 onClick={() => onNavigate('saas-desk')}
                 className="h-[20px] px-2 bg-[#0e1117] border border-[#ff8800]/60 text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10] font-bold"
               >
-                模拟实盘舱
+                OMS 实盘柜台
               </button>
             </>
           )}
@@ -1360,7 +1360,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
                 onClick={() => onNavigate('saas-desk')}
                 className="px-2 h-[19px] bg-[#ff8800] text-[#090c10] font-bold text-[10px]"
               >
-                立即前往模拟实盘舱
+                立即前往 OMS 实盘柜台
               </button>
             )}
             <button
@@ -1808,7 +1808,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
                                   }
                                   className="px-1.5 h-[18px] bg-[#161b24] border border-[#e5b567]/50 text-[#e5b567] hover:bg-[#ff8800] hover:text-[#090c10] hover:border-[#ff8800] text-[10px] disabled:opacity-50"
                                 >
-                                  {paperOrderKey === `2nd-${t.code}` ? '下单...' : '[一键转入模拟实盘舱]'}
+                                  {paperOrderKey === `2nd-${t.code}` ? '下单...' : '[一键直通实盘柜台]'}
                                 </button>
                               </div>
                             </td>
@@ -1889,7 +1889,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
                             }}
                             className="px-2 h-[20px] bg-[#161b24] border border-[#ff8800]/60 text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10] text-[10px] font-bold disabled:opacity-50"
                           >
-                            {paperOrderKey === `pb-${pb.legType}` ? '转入中...' : '[一键转入模拟实盘舱]'}
+                            {paperOrderKey === `pb-${pb.legType}` ? '下单中...' : '[一键直通实盘柜台]'}
                           </button>
                         </div>
                       </div>

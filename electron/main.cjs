@@ -265,7 +265,11 @@ function buildAppMenu() {
     { label: 'F10 PandaAI × 期货PM', accelerator: 'CmdOrCtrl+2', click: () => navigateToTab('panda-pm') },
     { label: 'F12 认知定价 / CPO 传导', accelerator: 'CmdOrCtrl+3', click: () => navigateToTab('consensus-cpo') },
     { label: '宏观 | 确定买点 / 付鹏 FICC', accelerator: 'CmdOrCtrl+4', click: () => navigateToTab('fact-fupeng') },
-    { label: '实盘 | 模拟舱 / SaaS 控制台', accelerator: 'CmdOrCtrl+5', click: () => navigateToTab('saas-desk') },
+    { label: '实盘 | OMS 实盘交易柜台与 SaaS', accelerator: 'CmdOrCtrl+5', click: () => navigateToTab('saas-desk') },
+    { type: 'separator' },
+    { label: '拆窗副屏: 确定买点 & 付鹏 FICC', click: () => openPopoutWindow('fact-fupeng', false) },
+    { label: '拆窗副屏: OMS 实盘交易柜台', click: () => openPopoutWindow('saas-desk', false) },
+    { label: '拆窗副屏: F12 CPO 传导中枢', click: () => openPopoutWindow('consensus-cpo', false) },
   ];
 
   const template = [
@@ -352,7 +356,11 @@ function setupTray() {
         { label: '直达 确定买点 & 付鹏24h宏观FICC台', click: () => navigateToTab('fact-fupeng') },
         { label: '直达 F12 认知定价 / CPO 传导', click: () => navigateToTab('consensus-cpo') },
         { label: '直达 F10 PandaAI × 期货PM', click: () => navigateToTab('panda-pm') },
-        { label: '直达 多租户 SaaS / 模拟实盘舱', click: () => navigateToTab('saas-desk') },
+        { label: '直达 OMS 实盘交易柜台 / SaaS', click: () => navigateToTab('saas-desk') },
+        { type: 'separator' },
+        { label: '副屏拆窗: 确定买点 & 付鹏 FICC', click: () => openPopoutWindow('fact-fupeng', false) },
+        { label: '副屏拆窗: OMS 实盘交易柜台', click: () => openPopoutWindow('saas-desk', false) },
+        { label: '副屏拆窗: F12 CPO 传导中枢', click: () => openPopoutWindow('consensus-cpo', false) },
         { type: 'separator' },
         {
           label: '窗口置顶 (Always on Top)',
@@ -390,6 +398,58 @@ function setupTray() {
   }
 }
 
+const popoutWindows = new Set();
+
+function openPopoutWindow(tab = 'fact-fupeng', alwaysOnTop = false) {
+  if (!serverPort || isSmokeTest) return null;
+  const safeTab = typeof tab === 'string' && tab.trim() ? tab.trim() : 'fact-fupeng';
+  const pop = new BrowserWindow({
+    width: 1320,
+    height: 840,
+    minWidth: 960,
+    minHeight: 620,
+    show: false,
+    backgroundColor: '#090c10',
+    title: `TICK STOCK PANEL Pro · 独立副屏 (${safeTab})`,
+    icon: fs.existsSync(ICON_PATH) ? ICON_PATH : undefined,
+    autoHideMenuBar: !isMac,
+    alwaysOnTop: Boolean(alwaysOnTop),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  pop.webContents.setWindowOpenHandler(({ url }) => {
+    if (url && /^https?:\/\//i.test(url) && !isAllowedLocalUrl(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  pop.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedLocalUrl(url) && /^https?:\/\//i.test(url)) {
+      event.preventDefault();
+      void shell.openExternal(url);
+    }
+  });
+
+  pop.once('ready-to-show', () => {
+    pop.show();
+  });
+
+  pop.on('closed', () => {
+    popoutWindows.delete(pop);
+  });
+
+  popoutWindows.add(pop);
+  const popUrl = `http://127.0.0.1:${serverPort}/?client=desktop&popout=1&tab=${encodeURIComponent(safeTab)}`;
+  void pop.loadURL(popUrl);
+  return pop;
+}
+
 function createMainWindow(port, initialTab = 'dashboard') {
   const win = new BrowserWindow({
     width: 1600,
@@ -398,7 +458,7 @@ function createMainWindow(port, initialTab = 'dashboard') {
     minHeight: 760,
     show: false,
     backgroundColor: '#090c10',
-    title: 'TICK STOCK PANEL Pro (v1.1.0-enterprise)',
+    title: 'TICK STOCK PANEL Pro (v1.2.0-enterprise)',
     icon: fs.existsSync(ICON_PATH) ? ICON_PATH : undefined,
     autoHideMenuBar: !isMac,
     webPreferences: {
@@ -463,6 +523,13 @@ ipcMain.on('tsp:navigate-tab', (_evt, tab) => {
   if (typeof tab === 'string' && tab.trim()) {
     navigateToTab(tab.trim());
   }
+});
+
+ipcMain.handle('tsp:open-popout', (_evt, arg) => {
+  const tab = typeof arg === 'string' ? arg : arg?.tab || 'fact-fupeng';
+  const alwaysOnTop = typeof arg === 'object' ? Boolean(arg?.alwaysOnTop) : false;
+  const win = openPopoutWindow(tab, alwaysOnTop);
+  return Boolean(win);
 });
 
 app.on('second-instance', () => {

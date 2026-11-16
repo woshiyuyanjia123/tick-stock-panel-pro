@@ -46,7 +46,7 @@ const SUB_TABS: { id: SubTabId; label: string }[] = [
   { id: 'fact-retro', label: '[01] 多标的专属事实因子 · 历史预测大复盘与确定性买点' },
   { id: 'fupeng-ficc', label: '[02] 付鹏全球宏观 FICC 框架 · 杠铃策略与专属标的参考' },
   { id: 'fupeng-24h', label: '[03] 付鹏老师 24小时全网动态实时抓取流 & 观点映射解析' },
-  { id: 'threshold-lab', label: '[04] 确定买点阈值实验室 · 18标的横向审计与模拟联动' },
+  { id: 'threshold-lab', label: '[04] 确定买点阈值实验室 · 18标的横向审计与实盘联动' },
 ];
 
 const ARCHETYPE_FILTERS: { id: FactArchetypeCategory; label: string }[] = [
@@ -464,6 +464,8 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
       action?: 'buy_long' | 'sell_long' | 'open_short' | 'cover_short';
       capitalAllocationPct?: number;
       price?: number;
+      stopLossPrice?: number | null;
+      takeProfitPrice?: number | null;
       strategyTag: string;
       note: string;
     }) => {
@@ -492,6 +494,8 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
           action: resolvedAction,
           capitalAllocationPct: alloc,
           price: opts.price && opts.price > 0 ? opts.price : undefined,
+          stopLossPrice: opts.stopLossPrice && opts.stopLossPrice > 0 ? opts.stopLossPrice : undefined,
+          takeProfitPrice: opts.takeProfitPrice && opts.takeProfitPrice > 0 ? opts.takeProfitPrice : undefined,
           leverage: market === 'futures' ? 2 : 1,
           strategyTag: opts.strategyTag,
           note: opts.note,
@@ -505,14 +509,14 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
             : '买入做多';
         setPaperToast({
           ok: true,
-          text: `已转入模拟实盘舱 [${res.activePortfolio?.name || '主组合'}]: ${cleanSymbol} ${
+          text: `已直通 OMS 实盘专户 [${res.activePortfolio?.name || '主组合'}]: ${cleanSymbol} ${
             opts.name || ''
           } (${actionLabel}, 配比 ${alloc.toFixed(1)}%) · 组合净值 ¥${fmtNum(eq, 0)}`,
         });
       } catch (e: unknown) {
         setPaperToast({
           ok: false,
-          text: `模拟建仓失败 (${cleanSymbol}): ${e instanceof Error ? e.message : '未知错误'}`,
+          text: `实盘建仓失败 (${cleanSymbol}): ${e instanceof Error ? e.message : '未知错误'}`,
         });
       } finally {
         setPaperBusyKey(null);
@@ -606,6 +610,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
           action,
           capitalAllocationPct: Math.max(5, Math.min(25, safeNum(p.kellySuggestedPct, 12))),
           price: p.lastPrice > 0 ? p.lastPrice : undefined,
+          stopLossPrice: p.falsificationStopPrice > 0 ? p.falsificationStopPrice : undefined,
           leverage: futures ? 2 : 1,
           strategyTag: 'V7四维确定买点批量',
           note: `${p.factRecipeTitle} | 胜率${fmtNum(p.deterministicWinRatePct, 1)}%`,
@@ -1298,7 +1303,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
               className="h-[20px] px-2 bg-[#0e1117] border border-[#2e394a] text-[#ff8800] hover:border-[#ff8800] flex items-center gap-1 font-medium"
             >
               <Send className="w-3 h-3" />
-              模拟实盘舱
+              OMS 实盘柜台
             </button>
           )}
           <button
@@ -1331,7 +1336,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                   : 'border-[#ff3535] text-[#ff3535]'
               }`}
             >
-              {paperToast.ok ? 'PAPER FILL' : 'ORDER VETO'}
+              {paperToast.ok ? 'OMS EXEC FILL' : 'ORDER VETO'}
             </span>
             <span className="truncate tabular-nums">{paperToast.text}</span>
           </div>
@@ -1342,7 +1347,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                 onClick={() => onNavigate('saas-desk')}
                 className="px-2 py-0.5 bg-[#ff8800] text-[#090c10] font-bold hover:bg-[#ff9c2a] flex items-center gap-1"
               >
-                立即前往模拟实盘舱
+                立即前往 OMS 实盘柜台
                 <ArrowRight className="w-3 h-3" />
               </button>
             )}
@@ -1552,13 +1557,14 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                                           : 'buy_long',
                                       capitalAllocationPct: p.kellySuggestedPct || 10,
                                       price: p.lastPrice,
+                                      stopLossPrice: p.falsificationStopPrice > 0 ? p.falsificationStopPrice : null,
                                       strategyTag: 'V7四维确定买点',
                                       note: `${p.factRecipeTitle} | 就绪度 ${p.passedConditionsCount}/4`,
                                     })
                                   }
                                   className="px-1.5 py-0.5 text-[10px] bg-[#241809] border border-[#ff8800] text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10] disabled:opacity-50"
                                 >
-                                  {busy ? '...' : '模拟建仓'}
+                                  {busy ? '...' : '实盘建仓'}
                                 </button>
                               </div>
                             </td>
@@ -1614,6 +1620,10 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                                   : 'buy_long',
                               capitalAllocationPct: selectedProfile.kellySuggestedPct || 12,
                               price: selectedProfile.lastPrice,
+                              stopLossPrice:
+                                selectedProfile.falsificationStopPrice > 0
+                                  ? selectedProfile.falsificationStopPrice
+                                  : null,
                               strategyTag: 'V7四维确定买点',
                               note: `${selectedProfile.factRecipeTitle} | 止损 ${fmtNum(
                                 selectedProfile.falsificationStopPrice,
@@ -1623,7 +1633,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                           }
                           className="h-[20px] px-2 bg-[#ff8800] text-[#090c10] font-bold hover:bg-[#ff9c2a] disabled:opacity-50"
                         >
-                          模拟建仓 ({fmtNum(selectedProfile.kellySuggestedPct, 1)}%)
+                          实盘建仓 ({fmtNum(selectedProfile.kellySuggestedPct, 1)}%)
                         </button>
                       </div>
                     )
@@ -1968,7 +1978,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
               className="h-[22px] px-2.5 bg-[#ff8800] text-[#090c10] font-bold text-[11px] hover:bg-[#ff9c2a] disabled:opacity-50 flex items-center gap-1 shrink-0"
             >
               <Send className="w-3 h-3" />
-              {batchOrdering ? '批量下单中...' : '一键按付鹏杠铃配比批量转入模拟盘'}
+              {batchOrdering ? '批量下单中...' : '一键按付鹏杠铃配比批量直通实盘'}
             </button>
           </div>
 
@@ -2141,7 +2151,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                                     }
                                     className="px-1.5 py-0.5 text-[10px] bg-[#241809] border border-[#ff8800] text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10] disabled:opacity-50"
                                   >
-                                    {busy ? '...' : '转入模拟盘'}
+                                    {busy ? '...' : '直通实盘'}
                                   </button>
                                 </div>
                               </td>
@@ -2676,7 +2686,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                                 }
                                 className="px-2 py-0.5 bg-[#241809] border-l border-[#ff8800] text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10]"
                               >
-                                转入模拟盘
+                                直通实盘
                               </button>
                             )}
                           </div>
@@ -2702,7 +2712,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
         </div>
       )}
 
-      {/* ==================== TAB 04: 确定买点阈值实验室 · 18标的横向审计与模拟联动 ==================== */}
+      {/* ==================== TAB 04: 确定买点阈值实验室 · 18标的横向审计与实盘联动 ==================== */}
       {activeTab === 'threshold-lab' && (
         <div className="flex-1 min-h-0 flex flex-col gap-[1px] bg-[#222832] overflow-hidden">
           {/* Top Action & Parameter Strip */}
@@ -2783,7 +2793,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
               className="h-[22px] px-2.5 bg-[#241809] border border-[#ff8800] text-[#ff8800] font-bold text-[11px] hover:bg-[#ff8800] hover:text-[#090c10] disabled:opacity-50 flex items-center gap-1"
             >
               <ShieldCheck className="w-3 h-3" />
-              一键将全部 4/4 确定性买点转入模拟实盘舱
+              一键将全部 4/4 确定性买点直通 OMS 实盘专户
             </button>
           </div>
 
@@ -2955,6 +2965,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                                       : 'buy_long',
                                   capitalAllocationPct: p.kellySuggestedPct || 10,
                                   price: p.lastPrice,
+                                  stopLossPrice: p.falsificationStopPrice > 0 ? p.falsificationStopPrice : null,
                                   strategyTag: 'V7阈值实验室',
                                   note: `确定胜率${fmtNum(p.deterministicWinRatePct, 1)}% | PF ${fmtNum(
                                     p.profitFactor,
@@ -2964,7 +2975,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                               }
                               className="px-1.5 py-0.5 text-[10px] bg-[#241809] border border-[#ff8800] text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10]"
                             >
-                              模拟建仓
+                              实盘建仓
                             </button>
                           </div>
                         </td>

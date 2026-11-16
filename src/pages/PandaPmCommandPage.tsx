@@ -1041,16 +1041,16 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
       if (!res.ok) {
         throw new Error(payload?.error || payload?.message || `HTTP ${res.status}`);
       }
-      const portfolioName = payload?.activePortfolio?.name || '默认模拟账户';
+      const portfolioName = payload?.activePortfolio?.name || '旗舰主策略实盘专户';
       const dirLabel = action === 'open_short' ? '开空' : '做多';
       setPaperOrderToast({
         ok: true,
-        text: `已转入模拟实盘舱 [${portfolioName}]: ${cleanSymbol} ${params.name || ''} | ${dirLabel} ${leverage}x | 仓位 ${capitalAllocationPct}% (${params.strategyTag})`,
+        text: `已直通 OMS 实盘专户 [${portfolioName}]: ${cleanSymbol} ${params.name || ''} | ${dirLabel} ${leverage}x | 仓位 ${capitalAllocationPct}% (${params.strategyTag})`,
       });
     } catch (err) {
       setPaperOrderToast({
         ok: false,
-        text: `转入模拟实盘舱失败 (${cleanSymbol}): ${err instanceof Error ? err.message : '请求异常'}`,
+        text: `实盘执行下单失败 (${cleanSymbol}): ${err instanceof Error ? err.message : '请求异常'}`,
       });
     } finally {
       setPaperOrderBusyKey('');
@@ -2373,7 +2373,7 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
                 onClick={() => onNavigate('saas-desk')}
                 className="px-2 h-[18px] bg-[#161b24] border border-[#ff8800] text-[#ff9500] hover:bg-[#ff8800] hover:text-[#090c10] text-[10px] font-bold rounded-[2px]"
               >
-                前往模拟实盘舱
+                前往 OMS 实盘柜台
               </button>
             )}
             <button
@@ -2730,7 +2730,7 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
                                   }}
                                   className="px-1.5 h-[18px] bg-[#161b24] border border-[#00c853] text-[#4ade80] hover:bg-[#00c853] hover:text-[#090c10] disabled:opacity-50 text-[10px] font-bold rounded-[2px]"
                                 >
-                                  {paperOrderBusyKey === `rel:${r.eventId}:${r.assetSymbol}` ? '发送中' : '转入模拟实盘舱'}
+                                  {paperOrderBusyKey === `rel:${r.eventId}:${r.assetSymbol}` ? '发送中' : '直通实盘执行'}
                                 </button>
                               </div>
                             </td>
@@ -3755,7 +3755,7 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
                                   }}
                                   className="px-1.5 h-[18px] bg-[#161b24] border border-[#00c853] text-[#4ade80] hover:bg-[#00c853] hover:text-[#090c10] disabled:opacity-50 text-[10px] font-bold rounded-[2px]"
                                 >
-                                  {paperOrderBusyKey === orderKey ? '发送中' : '转入模拟实盘舱'}
+                                  {paperOrderBusyKey === orderKey ? '发送中' : '直通实盘执行'}
                                 </button>
                               </td>
                             </tr>

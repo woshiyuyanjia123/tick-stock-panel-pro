@@ -232,11 +232,11 @@ export default function WatchlistPage({ onSelectStock, onNavigate }: WatchlistPa
         price,
         leverage: 1,
         strategyTag: `F2自选-${item.groupName || activeGroup || '核心自选'}`,
-        note: item.note || 'F2自选池模拟盘买入',
+        note: item.note || 'F2自选池实盘买入',
       });
-      flashStatus(`模拟盘买入已成交(10%仓位): ${item.code} ${item.name}`, true);
+      flashStatus(`实盘买入已成交(10%仓位): ${item.code} ${item.name}`, true);
     } catch (err: any) {
-      flashStatus(`模拟盘下单失败: ${err?.message || '未知错误'}`);
+      flashStatus(`实盘下单失败: ${err?.message || '未知错误'}`);
     } finally {
       setBuyingCode(null);
     }
@@ -255,7 +255,7 @@ export default function WatchlistPage({ onSelectStock, onNavigate }: WatchlistPa
       '量比',
       '成交额(元)',
       '持仓成本',
-      '模拟股数',
+      '持仓股数',
       '浮动盈亏(%)',
       '目标止盈',
       '纪律止损',
@@ -449,7 +449,7 @@ export default function WatchlistPage({ onSelectStock, onNavigate }: WatchlistPa
           <div className="flex items-center">
             <span className="w-[2px] h-3 bg-[#ff8800] mr-2 inline-block" />
             <span className="text-[12px] font-bold text-[#dfe6f0]">
-              F2 自选股报价与模拟持仓监控
+              F2 自选股报价与实盘持仓监控
             </span>
           </div>
           <div className="flex items-center border-l border-[#232a36] pl-2.5 gap-1">
@@ -482,7 +482,7 @@ export default function WatchlistPage({ onSelectStock, onNavigate }: WatchlistPa
                   onClick={() => onNavigate('saas-desk')}
                   className="px-1.5 py-0.5 rounded-[2px] border border-[#ff8800] text-[#ff9500] hover:bg-[#1b2434] font-sans"
                 >
-                  进入模拟实盘舱
+                  进入 OMS 实盘交易柜台
                 </button>
               )}
             </span>
@@ -865,9 +865,9 @@ export default function WatchlistPage({ onSelectStock, onNavigate }: WatchlistPa
                         onClick={() => handlePaperBuy(item)}
                         disabled={buyingCode === item.code}
                         className="px-1.5 py-0.5 text-[11px] rounded-[2px] border border-[#ff8800] text-[#ff9500] hover:bg-[#ff8800] hover:text-[#090c10] mr-1 disabled:opacity-50"
-                        title="按10%组合净值以现价在模拟实盘舱买入(A股T+1整手)"
+                        title="按10%组合净值以现价在 OMS 实盘专户买入(A股T+1整手)"
                       >
-                        {buyingCode === item.code ? '下单中' : '模拟盘买入'}
+                        {buyingCode === item.code ? '下单中' : '实盘买入'}
                       </button>
                       <button
                         onClick={() => openEditor(item)}
@@ -920,7 +920,7 @@ export default function WatchlistPage({ onSelectStock, onNavigate }: WatchlistPa
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-[#8b95a5] mb-1">模拟持股数 (股)</label>
+                  <label className="block text-[11px] text-[#8b95a5] mb-1">持仓股数 (股)</label>
                   <input
                     type="number"
                     step="100"

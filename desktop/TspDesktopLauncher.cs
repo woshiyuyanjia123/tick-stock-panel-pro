@@ -381,7 +381,7 @@ namespace TspProDesktop
             ToolStripMenuItem factFupengItem = new ToolStripMenuItem("直达 确定买点 & 付鹏24h宏观FICC台");
             factFupengItem.Click += delegate { OpenTabUrl("fact-fupeng"); };
 
-            ToolStripMenuItem paperItem = new ToolStripMenuItem("直达 策略模拟实盘舱 (Paper Desk)");
+            ToolStripMenuItem paperItem = new ToolStripMenuItem("直达 OMS 实盘交易柜台 (Live Desk)");
             paperItem.Click += delegate { OpenTabUrl("saas-desk"); };
 
             ToolStripMenuItem restartServerItem = new ToolStripMenuItem("重启后台量化服务引擎");

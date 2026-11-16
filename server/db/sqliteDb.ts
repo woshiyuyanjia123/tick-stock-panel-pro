@@ -2,7 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { AlertTriggerEvent, MonitorRule, WatchlistItem } from '../../src/types/market';
+import type {
+  AlertTriggerEvent,
+  MonitorRule,
+  OmsExecutionPolicy,
+  WatchlistItem,
+} from '../../src/types/market';
 import { DATA_DIR } from '../utils/httpCache';
 import { cleanCode, getBeijingTimeInfo } from '../utils/marketHelpers';
 
@@ -43,10 +48,11 @@ export const SQLITE_TABLE_CATALOG: TableMetaEntry[] = [
   { tableName: 'watchlist_groups', description: '租户隔离自选股分组' },
   { tableName: 'watchlist_items', description: '租户自选池与成本风控参数' },
   { tableName: 'backtest_runs', description: '5大引擎历史回测归档库' },
-  { tableName: 'paper_portfolios', description: '模拟实盘资产组合账户' },
-  { tableName: 'paper_positions', description: '实时盯市持仓与T+1锁仓明细' },
-  { tableName: 'paper_orders', description: '模拟交易委托与交割成交流水' },
-  { tableName: 'paper_nav_points', description: '模拟组合历史净值曲线时序' },
+  { tableName: 'paper_portfolios', description: '多策略实盘资金专户' },
+  { tableName: 'paper_positions', description: '实时盯市持仓与T+1/止损风控明细' },
+  { tableName: 'paper_orders', description: 'OMS交易委托与交割成交流水' },
+  { tableName: 'paper_nav_points', description: '资金专户历史净值与回撤时序' },
+  { tableName: 'oms_execution_policy', description: 'OMS四维自动报单与证伪止损风控策略' },
   { tableName: 'alert_rules', description: '实盘异动与价格风控规则' },
   { tableName: 'alert_events', description: '实时告警触发审计日志' },
   { tableName: 'webhook_channels', description: '飞书/钉钉/企微/TG推送通道' },
@@ -334,9 +340,74 @@ function initSchemaAndSeeds(db: DatabaseSync): void {
       mapped_targets_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_fupeng_intel_pub ON fupeng_intel_items(published_at DESC);
+
+    CREATE TABLE IF NOT EXISTS oms_execution_policy (
+      user_id TEXT PRIMARY KEY,
+      auto_follow_4of4 INTEGER NOT NULL DEFAULT 0,
+      auto_stop_loss_guard INTEGER NOT NULL DEFAULT 1,
+      auto_alloc_pct REAL NOT NULL DEFAULT 10,
+      max_daily_auto_orders INTEGER NOT NULL DEFAULT 3,
+      default_slippage_bps REAL NOT NULL DEFAULT 1.5,
+      updated_at TEXT NOT NULL
+    );
   `);
 
+  runOmsSchemaMigrations(db);
   seedInitialEnterpriseData(db);
+}
+
+function runOmsSchemaMigrations(db: DatabaseSync): void {
+  const posCols = db.prepare(`PRAGMA table_info(paper_positions)`).all() as { name: string }[];
+  const posColSet = new Set(posCols.map((c) => c.name));
+  if (!posColSet.has('stop_loss_price')) {
+    db.exec(`ALTER TABLE paper_positions ADD COLUMN stop_loss_price REAL`);
+  }
+  if (!posColSet.has('take_profit_price')) {
+    db.exec(`ALTER TABLE paper_positions ADD COLUMN take_profit_price REAL`);
+  }
+  db.exec(`
+    UPDATE paper_positions
+    SET stop_loss_price = ROUND(
+      CASE WHEN side = 'short' THEN avg_cost * 1.045 ELSE avg_cost * 0.955 END,
+      2
+    )
+    WHERE stop_loss_price IS NULL OR stop_loss_price <= 0;
+  `);
+
+  const ordCols = db.prepare(`PRAGMA table_info(paper_orders)`).all() as { name: string }[];
+  const ordColSet = new Set(ordCols.map((c) => c.name));
+  if (!ordColSet.has('exec_id')) {
+    db.exec(`ALTER TABLE paper_orders ADD COLUMN exec_id TEXT`);
+  }
+  if (!ordColSet.has('order_type')) {
+    db.exec(`ALTER TABLE paper_orders ADD COLUMN order_type TEXT DEFAULT 'MARKET_IOC'`);
+  }
+  if (!ordColSet.has('slippage_bps')) {
+    db.exec(`ALTER TABLE paper_orders ADD COLUMN slippage_bps REAL DEFAULT 1.2`);
+  }
+  if (!ordColSet.has('tax_and_fee_detail')) {
+    db.exec(`ALTER TABLE paper_orders ADD COLUMN tax_and_fee_detail TEXT DEFAULT ''`);
+  }
+  db.exec(`
+    UPDATE paper_orders
+    SET exec_id = 'EX' || REPLACE(SUBSTR(created_at, 1, 10), '-', '') || '-' || printf('%06d', id)
+    WHERE exec_id IS NULL OR exec_id = '';
+    UPDATE paper_orders
+    SET order_type = 'MARKET_IOC'
+    WHERE order_type IS NULL OR order_type = '';
+  `);
+
+  const oldMainName = '\u4e3b\u7b56\u7565\u5b9e\u76d8\u6a21\u62df\u8231';
+  const oldMacroName = '\u5b8f\u89c2\u4e8b\u4ef6\u5bf9\u51b2\u6a21\u62df\u8231';
+  const oldCabin = '\u6a21\u62df\u5b9e\u76d8\u8231';
+  const oldShort = '\u6a21\u62df\u8231';
+  const oldGroup = '\u6a21\u62df\u7ec4\u5408';
+  const oldWord = '\u6a21\u62df';
+  db.prepare(`UPDATE paper_portfolios SET name = '旗舰主策略实盘专户' WHERE name = ?`).run(oldMainName);
+  db.prepare(`UPDATE paper_portfolios SET name = '全球宏观FICC对冲专户' WHERE name = ?`).run(oldMacroName);
+  db.prepare(
+    `UPDATE paper_portfolios SET name = REPLACE(REPLACE(REPLACE(name, ?, '实盘专户'), ?, '实盘专户'), ?, '策略专户') WHERE name LIKE ?`
+  ).run(oldCabin, oldShort, oldGroup, `%${oldWord}%`);
 }
 
 function seedInitialEnterpriseData(db: DatabaseSync): void {
@@ -588,8 +659,8 @@ function seedInitialPaperPortfolios(db: DatabaseSync): void {
   // 2) 600547: 4500 * 24.80 = 111,600 (fee 27.90)
   // 3) AU0 (mini-lot 100g/lot, 5 lots * 615.20 * 100 / 5x = 61,520 margin, fee 30.76)
   // Total cash spent = 159,039.75 + 111,627.90 + 61,550.76 = 332,218.41 -> remaining cash = 667,781.59
-  insPf.run('pf_desk_main', 'u_desk_admin', '主策略实盘模拟舱', 1_000_000, 667_781.59, 14_280.0, '2026-11-06 09:30:00');
-  insPf.run('pf_macro_pm_main', 'u_macro_pm', '宏观事件对冲模拟舱', 500_000, 444_000.0, 4_120.0, '2026-11-08 09:30:00');
+  insPf.run('pf_desk_main', 'u_desk_admin', '旗舰主策略实盘专户', 1_000_000, 667_781.59, 14_280.0, '2026-11-06 09:30:00');
+  insPf.run('pf_macro_pm_main', 'u_macro_pm', '全球宏观FICC对冲专户', 500_000, 444_000.0, 4_120.0, '2026-11-08 09:30:00');
 
   const insPos = db.prepare(`
     INSERT OR IGNORE INTO paper_positions
@@ -1152,5 +1223,92 @@ export function dbGetFupengIntelCount(): number {
   const db = getDb();
   const row = db.prepare(`SELECT COUNT(*) AS cnt FROM fupeng_intel_items`).get() as { cnt: number };
   return Number(row?.cnt || 0);
+}
+
+export function dbGetOmsPolicy(userId = 'u_desk_admin'): OmsExecutionPolicy {
+  const db = getDb();
+  const uid = userId || 'u_desk_admin';
+  const row = db
+    .prepare(`SELECT * FROM oms_execution_policy WHERE user_id = ?`)
+    .get(uid) as any;
+  if (!row) {
+    const now = nowIsoLocal();
+    db.prepare(`
+      INSERT OR IGNORE INTO oms_execution_policy
+        (user_id, auto_follow_4of4, auto_stop_loss_guard, auto_alloc_pct, max_daily_auto_orders, default_slippage_bps, updated_at)
+      VALUES (?, 0, 1, 10, 3, 1.5, ?)
+    `).run(uid, now);
+    return {
+      userId: uid,
+      autoFollow4of4: false,
+      autoStopLossGuard: true,
+      autoAllocPct: 10,
+      maxDailyAutoOrders: 3,
+      defaultSlippageBps: 1.5,
+      updatedAt: now,
+    };
+  }
+  return {
+    userId: String(row.user_id),
+    autoFollow4of4: Number(row.auto_follow_4of4) === 1,
+    autoStopLossGuard: Number(row.auto_stop_loss_guard) === 1,
+    autoAllocPct: Number(row.auto_alloc_pct || 10),
+    maxDailyAutoOrders: Number(row.max_daily_auto_orders || 3),
+    defaultSlippageBps: Number(row.default_slippage_bps || 1.5),
+    updatedAt: String(row.updated_at || nowIsoLocal()),
+  };
+}
+
+export function dbSaveOmsPolicy(
+  userId: string,
+  patch: Partial<OmsExecutionPolicy>
+): OmsExecutionPolicy {
+  const current = dbGetOmsPolicy(userId);
+  const next: OmsExecutionPolicy = {
+    userId: current.userId,
+    autoFollow4of4:
+      patch.autoFollow4of4 !== undefined ? Boolean(patch.autoFollow4of4) : current.autoFollow4of4,
+    autoStopLossGuard:
+      patch.autoStopLossGuard !== undefined
+        ? Boolean(patch.autoStopLossGuard)
+        : current.autoStopLossGuard,
+    autoAllocPct:
+      patch.autoAllocPct !== undefined
+        ? Math.max(2, Math.min(35, Number(patch.autoAllocPct) || 10))
+        : current.autoAllocPct,
+    maxDailyAutoOrders:
+      patch.maxDailyAutoOrders !== undefined
+        ? Math.max(1, Math.min(10, Math.round(Number(patch.maxDailyAutoOrders) || 3)))
+        : current.maxDailyAutoOrders,
+    defaultSlippageBps:
+      patch.defaultSlippageBps !== undefined
+        ? Math.max(0, Math.min(30, Number(patch.defaultSlippageBps) || 1.5))
+        : current.defaultSlippageBps,
+    updatedAt: nowIsoLocal(),
+  };
+
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO oms_execution_policy
+      (user_id, auto_follow_4of4, auto_stop_loss_guard, auto_alloc_pct, max_daily_auto_orders, default_slippage_bps, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      auto_follow_4of4 = excluded.auto_follow_4of4,
+      auto_stop_loss_guard = excluded.auto_stop_loss_guard,
+      auto_alloc_pct = excluded.auto_alloc_pct,
+      max_daily_auto_orders = excluded.max_daily_auto_orders,
+      default_slippage_bps = excluded.default_slippage_bps,
+      updated_at = excluded.updated_at
+  `).run(
+    next.userId,
+    next.autoFollow4of4 ? 1 : 0,
+    next.autoStopLossGuard ? 1 : 0,
+    next.autoAllocPct,
+    next.maxDailyAutoOrders,
+    next.defaultSlippageBps,
+    next.updatedAt
+  );
+
+  return next;
 }
 

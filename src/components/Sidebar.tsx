@@ -36,7 +36,7 @@ const RAIL_ITEMS: RailItem[] = [
   { id: 'panda-pm', short: '跨市', label: 'F10 PandaAI x 期货PM', accent: 'alpha', groupHeader: 'Alpha' },
   { id: 'consensus-cpo', short: '认知', label: 'F12 超前认知定价与CPO传导', accent: 'alpha' },
   { id: 'fact-fupeng', short: '付鹏', label: '确定买点复盘 & 付鹏24h宏观FICC', accent: 'alpha' },
-  { id: 'saas-desk', short: '实盘', label: '模拟实盘与SaaS中枢', accent: 'alpha', groupHeader: '实盘' },
+  { id: 'saas-desk', short: '实盘', label: 'OMS实盘交易柜台与SaaS', accent: 'alpha', groupHeader: '实盘' },
   { id: 'monitor', short: '监控', label: 'F11 监控中心', accent: 'ext' },
   { id: 'anomaly', short: '异动', label: 'F11 短线异动精灵', accent: 'ext' },
 ];

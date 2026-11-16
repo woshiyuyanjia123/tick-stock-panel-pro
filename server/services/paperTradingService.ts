@@ -1,96 +1,43 @@
 import crypto from 'node:crypto';
-import type { StockQuoteItem } from '../../src/types/market';
-import { getDb, runInTransaction } from '../db/sqliteDb';
+import type {
+  AlertTriggerEvent,
+  AssetFactBuyPointProfile,
+  OmsExecutionPolicy,
+  OmsOrderBookLevel,
+  OmsQuotePreviewResponse,
+  PaperDeskOverviewResponse,
+  PaperOrderItem,
+  PaperOrderRequest,
+  PaperPortfolioSummary,
+  PaperPositionItem,
+  StockQuoteItem,
+} from '../../src/types/market';
+import {
+  dbGetOmsPolicy,
+  getDb,
+  runInTransaction,
+} from '../db/sqliteDb';
 import { fetchAllAShareSnapshots } from '../providers/eastmoney';
 import { fetchTencentQuotes, resolveTradingDates } from '../providers/tencent';
-import { cleanCode, getBeijingTimeInfo } from '../utils/marketHelpers';
+import { fetchGbkTextWithRetry } from '../utils/httpCache';
+import { cleanCode, getBeijingTimeInfo, toTencentSymbol } from '../utils/marketHelpers';
 import { fetch28FuturesQuotes, fetchFuturesKLines, FUTURES_28 } from './pandaPmService';
 import { getStockDetail } from './stockService';
 
-export interface PaperPortfolioSummary {
-  id: string;
-  userId: string;
-  name: string;
-  initialCapital: number;
-  cashBalance: number;
-  marketValue: number;
-  marginUsed: number;
-  totalEquity: number;
-  unrealizedPnl: number;
-  realizedPnl: number;
-  totalReturnPct: number;
-  todayPnl: number;
-  positionUsagePct: number;
-  positionCount: number;
-  createdAt: string;
-}
+export type {
+  OmsExecutionPolicy,
+  OmsOrderBookLevel,
+  OmsQuotePreviewResponse,
+  PaperDeskOverviewResponse,
+  PaperOrderItem,
+  PaperOrderRequest,
+  PaperPortfolioSummary,
+  PaperPositionItem,
+};
 
-export interface PaperPositionItem {
-  id: string;
-  portfolioId: string;
-  symbol: string;
-  name: string;
-  market: 'ashare' | 'futures';
-  side: 'long' | 'short';
-  quantity: number;
-  availableQuantity: number;
-  avgCost: number;
-  lastPrice: number;
-  leverage: number;
-  marginOccupied: number;
-  marketValue: number;
-  unrealizedPnl: number;
-  unrealizedPnlPct: number;
-  strategyTag: string;
-  openedDate: string;
-}
-
-export interface PaperOrderItem {
-  id: number;
-  portfolioId: string;
-  createdAt: string;
-  tradingDate: string;
-  symbol: string;
-  name: string;
-  market: 'ashare' | 'futures';
-  action: 'buy_long' | 'sell_long' | 'open_short' | 'cover_short';
-  quantity: number;
-  fillPrice: number;
-  leverage: number;
-  fee: number;
-  realizedPnl: number;
-  strategyTag: string;
-  note: string;
-}
-
-export interface PaperOrderRequest {
-  portfolioId?: string;
-  symbol: string;
-  name?: string;
-  market?: 'ashare' | 'futures';
-  action: 'buy_long' | 'sell_long' | 'open_short' | 'cover_short';
-  quantity?: number;
-  capitalAllocationPct?: number;
-  price?: number;
-  leverage?: number;
-  strategyTag?: string;
-  note?: string;
-}
-
-export interface PaperDeskOverviewResponse {
-  updatedAt: string;
-  tradingDate: string;
-  activePortfolio: PaperPortfolioSummary;
-  portfolios: PaperPortfolioSummary[];
-  positions: PaperPositionItem[];
-  orders: PaperOrderItem[];
-  navHistory: {
-    timestamp: string;
-    totalEquity: number;
-    returnPct: number;
-    cashBalance: number;
-  }[];
-}
+const TENCENT_HEADERS = {
+  Referer: 'https://gu.qq.com/',
+};
 
 function nowBj(): string {
   const bj = getBeijingTimeInfo();
@@ -114,8 +61,8 @@ function normalizeSymbol(symbol: string, market: 'ashare' | 'futures'): string {
 }
 
 /**
- * Standardized institutional mini-lot multiplier for simulated execution so every one of the 28
- * domestic futures contracts fits comfortably inside a 200k-1M simulation account.
+ * Standardized institutional mini-lot multiplier for domestic futures sizing
+ * so every one of the 28 contracts scales accurately within multi-strategy desk accounts.
  */
 export function getSimFuturesLotMultiplier(symbol: string): number {
   const upper = String(symbol || '').trim().toUpperCase().replace(/\..*$/, '');
@@ -124,6 +71,203 @@ export function getSimFuturesLotMultiplier(symbol: string): number {
   if (meta.multiplier >= 1000) return Math.round(meta.multiplier / 10);
   if (meta.multiplier >= 200) return Math.round(meta.multiplier / 10);
   return meta.multiplier;
+}
+
+const FUTURES_TICK_MAP: Record<string, number> = {
+  AU0: 0.02,
+  AG0: 1,
+  SC0: 0.1,
+  EC0: 0.1,
+  CU0: 10,
+  AL0: 5,
+  ZN0: 5,
+  NI0: 10,
+  SN0: 10,
+  TL0: 0.01,
+  T0: 0.005,
+  IF0: 0.2,
+  IH0: 0.2,
+  IC0: 0.2,
+  IM0: 0.2,
+  LC0: 50,
+  SI0: 5,
+  RB0: 1,
+  FG0: 1,
+  I0: 0.5,
+  MA0: 1,
+  TA0: 2,
+  M0: 1,
+  P0: 2,
+  FU0: 1,
+  BU0: 2,
+  RU0: 5,
+  SP0: 2,
+};
+
+export function getInstrumentTickSize(symbol: string, market: 'ashare' | 'futures'): number {
+  if (market === 'ashare') return 0.01;
+  const upper = normalizeSymbol(symbol, 'futures');
+  return FUTURES_TICK_MAP[upper] ?? 1;
+}
+
+function roundToTick(price: number, tick: number): number {
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  const safeTick = tick > 0 ? tick : 0.01;
+  const rounded = Math.round(price / safeTick) * safeTick;
+  const decimals = safeTick < 0.01 ? 3 : safeTick < 1 ? 2 : 0;
+  return Number(rounded.toFixed(decimals));
+}
+
+function buildSyntheticDepth(
+  midPrice: number,
+  tick: number,
+  baseLots: number
+): { bids: OmsOrderBookLevel[]; asks: OmsOrderBookLevel[] } {
+  const bids: OmsOrderBookLevel[] = [];
+  const asks: OmsOrderBookLevel[] = [];
+  for (let i = 1; i <= 5; i++) {
+    bids.push({
+      level: i,
+      price: roundToTick(Math.max(tick, midPrice - i * tick), tick),
+      volume: Math.max(1, Math.round(baseLots * (1.2 + i * 0.45))),
+    });
+    asks.push({
+      level: i,
+      price: roundToTick(midPrice + i * tick, tick),
+      volume: Math.max(1, Math.round(baseLots * (1.1 + i * 0.4))),
+    });
+  }
+  return { bids, asks };
+}
+
+export async function getOmsQuotePreview(
+  rawSymbol: string,
+  explicitMarket?: 'ashare' | 'futures'
+): Promise<OmsQuotePreviewResponse> {
+  const market = detectMarket(rawSymbol, explicitMarket);
+  const symbol = normalizeSymbol(rawSymbol, market);
+  if (!symbol || (market === 'ashare' && symbol.length !== 6)) {
+    throw new Error(`无效交易代码: ${rawSymbol}`);
+  }
+  const tick = getInstrumentTickSize(symbol, market);
+
+  if (market === 'ashare') {
+    const tSym = toTencentSymbol(symbol);
+    let parsed: string[] | null = null;
+    try {
+      const text = await fetchGbkTextWithRetry(`https://qt.gtimg.cn/q=${tSym}`, TENCENT_HEADERS, 6000, 1);
+      const eq = text.indexOf('=');
+      if (eq >= 0) {
+        parsed = text
+          .slice(eq + 1)
+          .replace(/^"|"[\s;]*$/g, '')
+          .split('~');
+      }
+    } catch {
+      parsed = null;
+    }
+
+    if (parsed && parsed.length >= 36 && Number(parsed[3] || 0) > 0) {
+      const lastPrice = Number(parsed[3]);
+      const prevClose = Number(parsed[4] || lastPrice);
+      const changePct =
+        Number(parsed[32] || 0) ||
+        (prevClose > 0 ? Number((((lastPrice - prevClose) / prevClose) * 100).toFixed(2)) : 0);
+      const upperLimit = Number(parsed[47] || 0) || Number((prevClose * 1.1).toFixed(2));
+      const lowerLimit = Number(parsed[48] || 0) || Number((prevClose * 0.9).toFixed(2));
+
+      const rawBids: OmsOrderBookLevel[] = [
+        { level: 1, price: Number(parsed[9] || 0), volume: Math.round(Number(parsed[10] || 0)) },
+        { level: 2, price: Number(parsed[11] || 0), volume: Math.round(Number(parsed[12] || 0)) },
+        { level: 3, price: Number(parsed[13] || 0), volume: Math.round(Number(parsed[14] || 0)) },
+        { level: 4, price: Number(parsed[15] || 0), volume: Math.round(Number(parsed[16] || 0)) },
+        { level: 5, price: Number(parsed[17] || 0), volume: Math.round(Number(parsed[18] || 0)) },
+      ].filter((b) => b.price > 0);
+
+      const rawAsks: OmsOrderBookLevel[] = [
+        { level: 1, price: Number(parsed[19] || 0), volume: Math.round(Number(parsed[20] || 0)) },
+        { level: 2, price: Number(parsed[21] || 0), volume: Math.round(Number(parsed[22] || 0)) },
+        { level: 3, price: Number(parsed[23] || 0), volume: Math.round(Number(parsed[24] || 0)) },
+        { level: 4, price: Number(parsed[25] || 0), volume: Math.round(Number(parsed[26] || 0)) },
+        { level: 5, price: Number(parsed[27] || 0), volume: Math.round(Number(parsed[28] || 0)) },
+      ].filter((a) => a.price > 0);
+
+      const fallbackDepth = buildSyntheticDepth(lastPrice, tick, 85);
+      return {
+        symbol,
+        name: String(parsed[1] || symbol).trim(),
+        market: 'ashare',
+        lastPrice,
+        prevClose,
+        changePct,
+        upperLimit,
+        lowerLimit,
+        lotSize: 100,
+        multiplier: 1,
+        tickSize: tick,
+        estSlippageBps: 1.5,
+        commissionRate: 0.00025,
+        stampDutyRate: 0.0005,
+        transferFeeRate: 0.00001,
+        bids: rawBids.length >= 3 ? rawBids : fallbackDepth.bids,
+        asks: rawAsks.length >= 3 ? rawAsks : fallbackDepth.asks,
+        updatedAt: nowBj(),
+      };
+    }
+
+    const q = await resolveSingleOrderQuote(symbol, 'ashare');
+    if (!q || !(q.price > 0)) {
+      throw new Error(`暂无 ${symbol} 盘口报价数据`);
+    }
+    const depth = buildSyntheticDepth(q.price, tick, 60);
+    return {
+      symbol,
+      name: q.name,
+      market: 'ashare',
+      lastPrice: q.price,
+      prevClose: q.prevClose,
+      changePct: q.prevClose > 0 ? Number((((q.price - q.prevClose) / q.prevClose) * 100).toFixed(2)) : 0,
+      upperLimit: Number((q.prevClose * 1.1).toFixed(2)),
+      lowerLimit: Number((q.prevClose * 0.9).toFixed(2)),
+      lotSize: 100,
+      multiplier: 1,
+      tickSize: tick,
+      estSlippageBps: 1.5,
+      commissionRate: 0.00025,
+      stampDutyRate: 0.0005,
+      transferFeeRate: 0.00001,
+      bids: depth.bids,
+      asks: depth.asks,
+      updatedAt: nowBj(),
+    };
+  }
+
+  // Domestic Futures
+  const q = await resolveSingleOrderQuote(symbol, 'futures');
+  if (!q || !(q.price > 0)) {
+    throw new Error(`暂未拉取到期货 ${symbol} 实时报价`);
+  }
+  const depth = buildSyntheticDepth(q.price, tick, 24);
+  return {
+    symbol,
+    name: q.name,
+    market: 'futures',
+    lastPrice: q.price,
+    prevClose: q.prevClose,
+    changePct: q.prevClose > 0 ? Number((((q.price - q.prevClose) / q.prevClose) * 100).toFixed(2)) : 0,
+    upperLimit: roundToTick(q.prevClose * 1.07, tick),
+    lowerLimit: roundToTick(q.prevClose * 0.93, tick),
+    lotSize: 1,
+    multiplier: getSimFuturesLotMultiplier(symbol),
+    tickSize: tick,
+    estSlippageBps: 1.0,
+    commissionRate: 0.0001,
+    stampDutyRate: 0,
+    transferFeeRate: 0,
+    bids: depth.bids,
+    asks: depth.asks,
+    updatedAt: nowBj(),
+  };
 }
 
 async function resolveCurrentTradingDate(): Promise<string> {
@@ -266,7 +410,7 @@ function ensureUserHasPortfolio(userId: string): void {
     tx.prepare(`
       INSERT INTO paper_portfolios (id, user_id, name, initial_capital, cash_balance, realized_pnl, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(pfId, userId, '主策略实盘模拟舱', 1_000_000, 1_000_000, 0, ts);
+    `).run(pfId, userId, '旗舰主策略实盘专户', 1_000_000, 1_000_000, 0, ts);
     tx.prepare(`
       INSERT INTO paper_nav_points (portfolio_id, timestamp, total_equity, return_pct, cash_balance)
       VALUES (?, ?, ?, ?, ?)
@@ -324,6 +468,26 @@ function computePositionMetrics(
   const equityContrib =
     market === 'ashare' ? marketValue : marginOccupied + unrealizedPnl;
 
+  const stopLossPrice =
+    row.stop_loss_price !== null && row.stop_loss_price !== undefined && Number(row.stop_loss_price) > 0
+      ? Number(row.stop_loss_price)
+      : null;
+  const takeProfitPrice =
+    row.take_profit_price !== null && row.take_profit_price !== undefined && Number(row.take_profit_price) > 0
+      ? Number(row.take_profit_price)
+      : null;
+
+  let distanceToStopPct: number | null = null;
+  if (stopLossPrice && lastPrice > 0) {
+    distanceToStopPct = Number(
+      (
+        side === 'short'
+          ? ((stopLossPrice - lastPrice) / lastPrice) * 100
+          : ((lastPrice - stopLossPrice) / lastPrice) * 100
+      ).toFixed(2)
+    );
+  }
+
   return {
     item: {
       id: String(row.id),
@@ -343,6 +507,9 @@ function computePositionMetrics(
       unrealizedPnlPct,
       strategyTag: String(row.strategy_tag || '手动下单'),
       openedDate: String(row.opened_date),
+      stopLossPrice,
+      takeProfitPrice,
+      distanceToStopPct,
     },
     todayPnlContrib,
     equityContrib,
@@ -483,6 +650,10 @@ export async function getPaperDeskOverview(
 
   const orders: PaperOrderItem[] = orderRows.map((o) => ({
     id: Number(o.id),
+    execId: String(o.exec_id || `EX-${String(o.id).padStart(6, '0')}`),
+    orderType: (o.order_type || 'MARKET_IOC') as PaperOrderItem['orderType'],
+    slippageBps: Number(o.slippage_bps ?? 1.2),
+    taxAndFeeDetail: String(o.tax_and_fee_detail || ''),
     portfolioId: String(o.portfolio_id),
     createdAt: String(o.created_at),
     tradingDate: String(o.trading_date),
@@ -521,6 +692,7 @@ export async function getPaperDeskOverview(
     portfolios,
     positions: activePositions,
     orders,
+    policy: dbGetOmsPolicy(userId),
     navHistory,
   };
 }
@@ -529,7 +701,7 @@ export async function createPaperPortfolio(
   userId: string,
   payload: { name: string; initialCapital: number }
 ): Promise<PaperDeskOverviewResponse> {
-  const name = String(payload?.name || '').trim().slice(0, 40) || '新建策略模拟组合';
+  const name = String(payload?.name || '').trim().slice(0, 40) || '新建策略实盘专户';
   const initialCapital = Math.max(10_000, Number(payload?.initialCapital || 1_000_000));
   const pfId = `pf_${crypto.randomBytes(6).toString('hex')}`;
   const ts = nowBj();
@@ -556,7 +728,7 @@ export async function resetPaperPortfolio(
   const db = getDb();
   const pf = db.prepare(`SELECT * FROM paper_portfolios WHERE id = ? AND user_id = ?`).get(portfolioId, userId) as any;
   if (!pf) {
-    throw new Error('模拟组合不存在或无权限操作');
+    throw new Error('实盘专户不存在或无权限操作');
   }
   const initialCapital = Number(pf.initial_capital);
   const ts = nowBj();
@@ -591,7 +763,7 @@ export async function placePaperOrder(
     : db.prepare(`SELECT * FROM paper_portfolios WHERE user_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 1`).get(userId)) as any;
 
   if (!pfRow) {
-    throw new Error('目标模拟组合不存在或无权限访问');
+    throw new Error('目标实盘专户不存在或无权限访问');
   }
   const portfolioId = String(pfRow.id);
   unlockTPlusOnePositions(portfolioId, tradingDate);
@@ -607,10 +779,22 @@ export async function placePaperOrder(
     throw new Error(`不支持的交易方向: ${action}`);
   }
   if (market === 'ashare' && (action === 'open_short' || action === 'cover_short')) {
-    throw new Error('A股模拟盘严格遵循现货规则，暂不支持融券做空，仅支持买入做多与卖出平多');
+    throw new Error('A股现货账户严格遵循交易所规则，不支持裸卖空，请通过股指/商品期货席位建立空头对冲');
   }
 
-  // Resolve fill price
+  // Resolve fill price & OMS execution metadata
+  const orderType: NonNullable<PaperOrderRequest['orderType']> =
+    req.orderType || (req.price && req.price > 0 ? 'LIMIT' : 'MARKET_IOC');
+  const tickSize = getInstrumentTickSize(symbol, market);
+  const requestedSlippage =
+    req.slippageBps !== undefined
+      ? Math.max(0, Math.min(30, Number(req.slippageBps)))
+      : req.price && req.price > 0
+        ? 0
+        : market === 'ashare'
+          ? 1.5
+          : 1.0;
+
   let liveQuote: ResolvedQuote | null = null;
   if (!(req.price && req.price > 0)) {
     liveQuote = await resolveSingleOrderQuote(symbol, market);
@@ -619,7 +803,7 @@ export async function placePaperOrder(
     SELECT * FROM paper_positions WHERE portfolio_id = ? AND symbol = ? AND market = ? LIMIT 1
   `).get(portfolioId, symbol, market) as any;
 
-  const fillPrice =
+  const basePrice =
     req.price && req.price > 0
       ? Number(req.price)
       : liveQuote && liveQuote.price > 0
@@ -628,9 +812,30 @@ export async function placePaperOrder(
           ? Number(existingPosAny.last_price)
           : 0;
 
-  if (!(fillPrice > 0)) {
-    throw new Error(`无法获取 ${symbol} 实时成交价，请稍后重试或手动输入委托价格`);
+  if (!(basePrice > 0)) {
+    throw new Error(`无法获取 ${symbol} 实时成交价，请稍后重试或手动输入委托限价`);
   }
+
+  const isBuyFlow = action === 'buy_long' || action === 'cover_short';
+  const slippedRaw =
+    requestedSlippage > 0
+      ? basePrice * (1 + (isBuyFlow ? 1 : -1) * (requestedSlippage / 10_000))
+      : basePrice;
+  const fillPrice = roundToTick(slippedRaw, tickSize) || Number(basePrice.toFixed(4));
+  const execId = `EX${tradingDate.replace(/-/g, '')}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+
+  const defaultStopLoss =
+    action === 'open_short'
+      ? roundToTick(fillPrice * 1.045, tickSize)
+      : roundToTick(fillPrice * 0.955, tickSize);
+  const stopLossPrice =
+    req.stopLossPrice !== undefined && req.stopLossPrice !== null && Number(req.stopLossPrice) > 0
+      ? roundToTick(Number(req.stopLossPrice), tickSize)
+      : defaultStopLoss;
+  const takeProfitPrice =
+    req.takeProfitPrice !== undefined && req.takeProfitPrice !== null && Number(req.takeProfitPrice) > 0
+      ? roundToTick(Number(req.takeProfitPrice), tickSize)
+      : null;
 
   const displayName =
     String(req.name || '').trim() ||
@@ -684,11 +889,15 @@ export async function placePaperOrder(
     let orderFee = 0;
     let orderRealizedPnl = 0;
     let execNote = note;
+    let taxAndFeeDetail = '';
 
     if (market === 'ashare') {
       if (action === 'buy_long') {
         const notional = fillPrice * qty;
-        orderFee = Number(Math.max(5, notional * 0.00025).toFixed(2));
+        const comm = Number(Math.max(5, notional * 0.00025).toFixed(2));
+        const xfer = Number((notional * 0.00001).toFixed(2));
+        orderFee = Number((comm + xfer).toFixed(2));
+        taxAndFeeDetail = `佣金¥${comm.toFixed(2)} + 过户费¥${xfer.toFixed(2)}`;
         const totalCost = notional + orderFee;
         if (cashBalance < totalCost) {
           throw new Error(
@@ -709,7 +918,8 @@ export async function placePaperOrder(
           // Preserve existing unlocked available_quantity; new shares remain T+1 locked until next trading day
           tx.prepare(`
             UPDATE paper_positions
-            SET name = ?, quantity = ?, avg_cost = ?, last_price = ?, strategy_tag = ?, opened_date = ?, last_unlock_date = ?
+            SET name = ?, quantity = ?, avg_cost = ?, last_price = ?, strategy_tag = ?, opened_date = ?, last_unlock_date = ?,
+                stop_loss_price = COALESCE(?, stop_loss_price), take_profit_price = COALESCE(?, take_profit_price)
             WHERE id = ?
           `).run(
             displayName,
@@ -719,13 +929,15 @@ export async function placePaperOrder(
             strategyTag,
             tradingDate,
             tradingDate,
+            req.stopLossPrice && req.stopLossPrice > 0 ? stopLossPrice : null,
+            takeProfitPrice,
             pos.id
           );
         } else {
           tx.prepare(`
             INSERT INTO paper_positions
-              (id, portfolio_id, symbol, name, market, side, quantity, available_quantity, avg_cost, last_price, leverage, margin_occupied, strategy_tag, opened_date, last_unlock_date)
-            VALUES (?, ?, ?, ?, 'ashare', 'long', ?, 0, ?, ?, 1, 0, ?, ?, ?)
+              (id, portfolio_id, symbol, name, market, side, quantity, available_quantity, avg_cost, last_price, leverage, margin_occupied, strategy_tag, opened_date, last_unlock_date, stop_loss_price, take_profit_price)
+            VALUES (?, ?, ?, ?, 'ashare', 'long', ?, 0, ?, ?, 1, 0, ?, ?, ?, ?, ?)
           `).run(
             `pos_${crypto.randomBytes(6).toString('hex')}`,
             portfolioId,
@@ -736,7 +948,9 @@ export async function placePaperOrder(
             fillPrice,
             strategyTag,
             tradingDate,
-            tradingDate
+            tradingDate,
+            stopLossPrice,
+            takeProfitPrice
           );
         }
         if (!execNote) {
@@ -759,9 +973,11 @@ export async function placePaperOrder(
           );
         }
         const proceeds = fillPrice * qty;
-        const commission = Math.max(5, proceeds * 0.00025);
-        const stampDuty = proceeds * 0.0005;
-        orderFee = Number((commission + stampDuty).toFixed(2));
+        const commission = Number(Math.max(5, proceeds * 0.00025).toFixed(2));
+        const stampDuty = Number((proceeds * 0.0005).toFixed(2));
+        const transferFee = Number((proceeds * 0.00001).toFixed(2));
+        orderFee = Number((commission + stampDuty + transferFee).toFixed(2));
+        taxAndFeeDetail = `佣金¥${commission.toFixed(2)} + 印花税¥${stampDuty.toFixed(2)} + 过户费¥${transferFee.toFixed(2)}`;
         orderRealizedPnl = Number(((fillPrice - Number(pos.avg_cost)) * qty - orderFee).toFixed(2));
 
         cashBalance = Number((cashBalance + proceeds - orderFee).toFixed(2));
@@ -779,7 +995,7 @@ export async function placePaperOrder(
           `).run(remQty, remAvail, fillPrice, pos.id);
         }
         if (!execNote) {
-          execNote = `A股卖出平多${qty}股（含佣金+印花税 ¥${orderFee.toFixed(2)}）`;
+          execNote = `A股卖出平多${qty}股 (${taxAndFeeDetail})`;
         }
       }
     } else {
@@ -792,6 +1008,7 @@ export async function placePaperOrder(
         const notional = fillPrice * qty * mult;
         const marginReq = Number((notional / leverage).toFixed(2));
         orderFee = Number(Math.max(2, notional * 0.0001).toFixed(2));
+        taxAndFeeDetail = `交易所手续费¥${orderFee.toFixed(2)} (${leverage}x保证金)`;
         const cashReq = marginReq + orderFee;
         if (cashBalance < cashReq) {
           throw new Error(
@@ -812,7 +1029,8 @@ export async function placePaperOrder(
           const newMargin = Number(pos.margin_occupied) + marginReq;
           tx.prepare(`
             UPDATE paper_positions
-            SET name = ?, quantity = ?, available_quantity = ?, avg_cost = ?, last_price = ?, leverage = ?, margin_occupied = ?, strategy_tag = ?
+            SET name = ?, quantity = ?, available_quantity = ?, avg_cost = ?, last_price = ?, leverage = ?, margin_occupied = ?, strategy_tag = ?,
+                stop_loss_price = COALESCE(?, stop_loss_price), take_profit_price = COALESCE(?, take_profit_price)
             WHERE id = ?
           `).run(
             displayName,
@@ -823,13 +1041,15 @@ export async function placePaperOrder(
             leverage,
             Number(newMargin.toFixed(2)),
             strategyTag,
+            req.stopLossPrice && req.stopLossPrice > 0 ? stopLossPrice : null,
+            takeProfitPrice,
             pos.id
           );
         } else {
           tx.prepare(`
             INSERT INTO paper_positions
-              (id, portfolio_id, symbol, name, market, side, quantity, available_quantity, avg_cost, last_price, leverage, margin_occupied, strategy_tag, opened_date, last_unlock_date)
-            VALUES (?, ?, ?, ?, 'futures', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (id, portfolio_id, symbol, name, market, side, quantity, available_quantity, avg_cost, last_price, leverage, margin_occupied, strategy_tag, opened_date, last_unlock_date, stop_loss_price, take_profit_price)
+            VALUES (?, ?, ?, ?, 'futures', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             `pos_${crypto.randomBytes(6).toString('hex')}`,
             portfolioId,
@@ -844,7 +1064,9 @@ export async function placePaperOrder(
             marginReq,
             strategyTag,
             tradingDate,
-            tradingDate
+            tradingDate,
+            stopLossPrice,
+            takeProfitPrice
           );
         }
         if (!execNote) {
@@ -868,6 +1090,7 @@ export async function placePaperOrder(
         }
         const notional = fillPrice * qty * mult;
         orderFee = Number(Math.max(2, notional * 0.0001).toFixed(2));
+        taxAndFeeDetail = `交易所手续费¥${orderFee.toFixed(2)}`;
         const releasedMargin = Number(pos.margin_occupied) * (qty / curQty);
         const priceDiff =
           targetSide === 'long'
@@ -903,8 +1126,8 @@ export async function placePaperOrder(
 
     tx.prepare(`
       INSERT INTO paper_orders
-        (portfolio_id, created_at, trading_date, symbol, name, market, action, quantity, fill_price, leverage, fee, realized_pnl, strategy_tag, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (portfolio_id, created_at, trading_date, symbol, name, market, action, quantity, fill_price, leverage, fee, realized_pnl, strategy_tag, note, exec_id, order_type, slippage_bps, tax_and_fee_detail)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       portfolioId,
       createdAt,
@@ -919,7 +1142,11 @@ export async function placePaperOrder(
       orderFee,
       orderRealizedPnl,
       strategyTag,
-      execNote
+      execNote,
+      execId,
+      orderType,
+      requestedSlippage,
+      taxAndFeeDetail
     );
 
     // Record updated NAV snapshot immediately after execution
@@ -949,7 +1176,9 @@ export async function placePaperOrder(
 
 export async function closePaperPosition(
   userId: string,
-  positionId: string
+  positionId: string,
+  _portfolioId?: string,
+  ratio = 1
 ): Promise<PaperDeskOverviewResponse> {
   const db = getDb();
   const row = db.prepare(`
@@ -963,17 +1192,232 @@ export async function closePaperPosition(
     throw new Error('未找到目标持仓记录或无权平仓');
   }
 
+  const totalQty = Number(row.quantity);
+  const availQty = row.market === 'futures' ? totalQty : Number(row.available_quantity);
+  const safeRatio = Math.max(0.1, Math.min(1, Number(ratio) || 1));
+
+  let closeQty = totalQty;
+  if (safeRatio < 0.99) {
+    if (row.market === 'ashare') {
+      closeQty = Math.floor((availQty * safeRatio) / 100) * 100;
+      if (closeQty < 100) closeQty = availQty;
+    } else {
+      closeQty = Math.max(1, Math.floor(totalQty * safeRatio));
+    }
+  }
+
   return placePaperOrder(userId, {
     portfolioId: String(row.portfolio_id),
     symbol: String(row.symbol),
     name: String(row.name),
     market: row.market as 'ashare' | 'futures',
     action: row.side === 'short' ? 'cover_short' : 'sell_long',
-    quantity: Number(row.quantity),
+    orderType: 'MARKET_IOC',
+    quantity: closeQty,
     leverage: Number(row.leverage || 1),
-    strategyTag: String(row.strategy_tag || '一键平仓'),
-    note: '持仓面板一键市价全平',
+    strategyTag: String(row.strategy_tag || '快速平仓'),
+    note: safeRatio < 0.99 ? `持仓面板按市价减仓 ${Math.round(safeRatio * 100)}% (${closeQty})` : '持仓面板市价全平',
   });
+}
+
+export async function updatePositionStops(
+  userId: string,
+  positionId: string,
+  payload: { stopLossPrice?: number | null; takeProfitPrice?: number | null; portfolioId?: string }
+): Promise<PaperDeskOverviewResponse> {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT p.*, pf.user_id
+    FROM paper_positions p
+    JOIN paper_portfolios pf ON pf.id = p.portfolio_id
+    WHERE p.id = ? AND pf.user_id = ?
+  `).get(positionId, userId) as any;
+
+  if (!row) {
+    throw new Error('未找到目标持仓或无权限修改风控止损线');
+  }
+
+  const sl =
+    payload.stopLossPrice !== undefined
+      ? payload.stopLossPrice && payload.stopLossPrice > 0
+        ? Number(payload.stopLossPrice)
+        : null
+      : row.stop_loss_price;
+  const tp =
+    payload.takeProfitPrice !== undefined
+      ? payload.takeProfitPrice && payload.takeProfitPrice > 0
+        ? Number(payload.takeProfitPrice)
+        : null
+      : row.take_profit_price;
+
+  db.prepare(`UPDATE paper_positions SET stop_loss_price = ?, take_profit_price = ? WHERE id = ?`).run(
+    sl,
+    tp,
+    row.id
+  );
+
+  return getPaperDeskOverview(userId, payload.portfolioId || String(row.portfolio_id));
+}
+
+export async function evaluateOmsStopLossGuards(): Promise<AlertTriggerEvent[]> {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT p.*, pf.user_id
+    FROM paper_positions p
+    JOIN paper_portfolios pf ON pf.id = p.portfolio_id
+    WHERE p.stop_loss_price IS NOT NULL AND p.stop_loss_price > 0
+  `).all() as any[];
+
+  if (rows.length === 0) return [];
+
+  const targets = rows.map((r) => ({
+    symbol: String(r.symbol),
+    market: r.market as 'ashare' | 'futures',
+  }));
+  const quoteMap = await resolveBatchQuotes(targets).catch(() => new Map<string, ResolvedQuote>());
+  const triggered: AlertTriggerEvent[] = [];
+
+  for (const r of rows) {
+    const uid = String(r.user_id);
+    const policy = dbGetOmsPolicy(uid);
+    if (!policy.autoStopLossGuard) continue;
+
+    const q = quoteMap.get(`${r.market}:${r.symbol}`);
+    if (!q || !(q.price > 0)) continue;
+
+    const sl = Number(r.stop_loss_price);
+    const breached = r.side === 'short' ? q.price >= sl : q.price <= sl;
+    if (!breached) continue;
+
+    const avail = r.market === 'futures' ? Number(r.quantity) : Number(r.available_quantity);
+    if (r.market === 'ashare' && avail <= 0) {
+      triggered.push({
+        id: `sl-lock-${r.id}-${nowBj().slice(0, 10).replace(/-/g, '')}`,
+        time: nowBj(),
+        ruleId: 'sys-oms-stoploss-lock',
+        ruleName: '止损破位(T+1锁仓待解锁)',
+        code: String(r.symbol),
+        name: String(r.name),
+        message: `${r.symbol} ${r.name} 现价 ${q.price.toFixed(2)} 已触及证伪止损 ${sl.toFixed(2)}，因当日买入T+1锁仓将于次日开盘优先市价出清`,
+        level: 'warn',
+      });
+      continue;
+    }
+
+    try {
+      await placePaperOrder(uid, {
+        portfolioId: String(r.portfolio_id),
+        symbol: String(r.symbol),
+        name: String(r.name),
+        market: r.market as 'ashare' | 'futures',
+        action: r.side === 'short' ? 'cover_short' : 'sell_long',
+        orderType: 'AUTO_GUARD',
+        quantity: avail,
+        leverage: Number(r.leverage || 1),
+        slippageBps: policy.defaultSlippageBps,
+        strategyTag: 'OMS证伪止损自动平仓',
+        note: `触发证伪止损线 ${sl.toFixed(2)} (现价 ${q.price.toFixed(2)}) 自动市价平仓`,
+      });
+      triggered.push({
+        id: `sl-exec-${r.id}-${Date.now().toString(36)}`,
+        time: nowBj(),
+        ruleId: 'sys-oms-stoploss-exec',
+        ruleName: 'OMS证伪止损已自动平仓',
+        code: String(r.symbol),
+        name: String(r.name),
+        message: `${r.symbol} ${r.name} 跌破止损线 ${sl.toFixed(2)}，已在专户执行 AUTO_GUARD 全额市价平仓 (现价 ${q.price.toFixed(2)})`,
+        level: 'critical',
+      });
+    } catch {
+      // ignore failed guard execution on stale cache
+    }
+  }
+
+  return triggered;
+}
+
+export async function evaluateOms4of4AutoFollow(
+  profiles: AssetFactBuyPointProfile[]
+): Promise<AlertTriggerEvent[]> {
+  const ready4of4 = profiles.filter((p) => p.passedConditionsCount >= 4);
+  if (ready4of4.length === 0) return [];
+
+  const db = getDb();
+  const policies = db
+    .prepare(`SELECT * FROM oms_execution_policy WHERE auto_follow_4of4 = 1`)
+    .all() as any[];
+
+  if (policies.length === 0) return [];
+  const today = await resolveCurrentTradingDate();
+  const events: AlertTriggerEvent[] = [];
+
+  for (const pol of policies) {
+    const uid = String(pol.user_id);
+    const maxAuto = Math.max(1, Number(pol.max_daily_auto_orders || 3));
+    const allocPct = Math.max(2, Math.min(35, Number(pol.auto_alloc_pct || 10)));
+    const slippageBps = Number(pol.default_slippage_bps ?? 1.5);
+
+    const pf = db
+      .prepare(`SELECT id FROM paper_portfolios WHERE user_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 1`)
+      .get(uid) as { id: string } | undefined;
+    if (!pf) continue;
+
+    const cntRow = db
+      .prepare(`SELECT COUNT(*) AS cnt FROM paper_orders WHERE portfolio_id = ? AND trading_date = ? AND order_type = 'AUTO_SIGNAL'`)
+      .get(pf.id, today) as { cnt: number };
+    let todayCount = Number(cntRow?.cnt || 0);
+    if (todayCount >= maxAuto) continue;
+
+    for (const prof of ready4of4) {
+      if (todayCount >= maxAuto) break;
+      const market = detectMarket(prof.symbol);
+      const sym = normalizeSymbol(prof.symbol, market);
+      const action: PaperOrderRequest['action'] =
+        prof.recommendedSide === '做空' && market === 'futures' ? 'open_short' : 'buy_long';
+
+      const existsPos = db
+        .prepare(`SELECT id FROM paper_positions WHERE portfolio_id = ? AND symbol = ? AND market = ? LIMIT 1`)
+        .get(pf.id, sym, market);
+      if (existsPos) continue;
+
+      const existsOrdToday = db
+        .prepare(`SELECT id FROM paper_orders WHERE portfolio_id = ? AND trading_date = ? AND symbol = ? AND order_type = 'AUTO_SIGNAL' LIMIT 1`)
+        .get(pf.id, today, sym);
+      if (existsOrdToday) continue;
+
+      try {
+        await placePaperOrder(uid, {
+          portfolioId: pf.id,
+          symbol: sym,
+          name: prof.name,
+          market,
+          action,
+          orderType: 'AUTO_SIGNAL',
+          capitalAllocationPct: allocPct,
+          leverage: market === 'futures' ? 2 : 1,
+          slippageBps,
+          stopLossPrice: prof.falsificationStopPrice > 0 ? prof.falsificationStopPrice : null,
+          strategyTag: '4/4确定买点自动报单',
+          note: `四维确定买点触发自动建仓(${allocPct}%配比) · 历史确定胜率 ${prof.deterministicWinRatePct}% · 证伪止损 ${prof.falsificationStopPrice}`,
+        });
+        todayCount++;
+        events.push({
+          id: `auto4-${uid}-${sym}-${today.replace(/-/g, '')}`,
+          time: nowBj(),
+          ruleId: 'sys-oms-auto-4of4',
+          ruleName: '4/4确定买点自动报单成交',
+          code: sym,
+          name: prof.name,
+          message: `专户 [${pf.id}] 已自动执行 ${sym} ${prof.name} ${action === 'open_short' ? '开空' : '建仓'} (${allocPct}%净值 · 预设证伪止损 ${prof.falsificationStopPrice})`,
+          level: 'critical',
+        });
+      } catch {
+        // insufficient cash or transient quote skip
+      }
+    }
+  }
+
+  return events;
 }
 
 function escapeCsvCell(val: unknown): string {
@@ -1011,6 +1455,8 @@ export function exportPaperOrdersCsv(userId: string, portfolioId?: string): stri
 
   const header = [
     '订单ID',
+    '合同编号',
+    '委托类型',
     '成交时间',
     '交易日',
     '组合名称',
@@ -1021,7 +1467,9 @@ export function exportPaperOrdersCsv(userId: string, portfolioId?: string): stri
     '成交价',
     '数量',
     '杠杆',
-    '手续费',
+    '滑点(bps)',
+    '手续费总计',
+    '税费明细',
     '实现盈亏',
     '策略来源',
     '备注',
@@ -1030,6 +1478,8 @@ export function exportPaperOrdersCsv(userId: string, portfolioId?: string): stri
   const lines = rows.map((r) =>
     [
       r.id,
+      r.exec_id || `EX-${String(r.id).padStart(6, '0')}`,
+      r.order_type || 'MARKET_IOC',
       r.created_at,
       r.trading_date,
       r.portfolio_name,
@@ -1040,7 +1490,9 @@ export function exportPaperOrdersCsv(userId: string, portfolioId?: string): stri
       r.fill_price,
       r.quantity,
       `${r.leverage}x`,
+      r.slippage_bps ?? 1.2,
       r.fee,
+      r.tax_and_fee_detail || '',
       r.realized_pnl,
       r.strategy_tag,
       r.note,

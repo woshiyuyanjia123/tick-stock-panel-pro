@@ -1387,7 +1387,44 @@ export interface AltConsensusBacktestResponse {
   }[];
 }
 
-// ================= V6 (v1.0.0-enterprise) 多租户量化SaaS · SQLite · 实时流 · 模拟实盘舱 =================
+// ================= V6–V8 (v1.2.0-enterprise) 多租户量化SaaS · SQLite · 实时流 · 机构OMS实盘交易柜台 =================
+
+export interface OmsOrderBookLevel {
+  level: number; // 1..5
+  price: number;
+  volume: number; // 手数 (A股100股/手, 期货1合约/手)
+}
+
+export interface OmsQuotePreviewResponse {
+  symbol: string;
+  name: string;
+  market: 'ashare' | 'futures';
+  lastPrice: number;
+  prevClose: number;
+  changePct: number;
+  upperLimit: number;
+  lowerLimit: number;
+  lotSize: number;
+  multiplier: number;
+  tickSize: number;
+  estSlippageBps: number;
+  commissionRate: number;
+  stampDutyRate: number;
+  transferFeeRate: number;
+  bids: OmsOrderBookLevel[];
+  asks: OmsOrderBookLevel[];
+  updatedAt: string;
+}
+
+export interface OmsExecutionPolicy {
+  userId: string;
+  autoFollow4of4: boolean;
+  autoStopLossGuard: boolean;
+  autoAllocPct: number;
+  maxDailyAutoOrders: number;
+  defaultSlippageBps: number;
+  updatedAt: string;
+}
 
 export type SaasPlanTier = 'free' | 'pro' | 'institutional';
 export type SaasSeatRole = 'admin' | 'pm' | 'researcher';
@@ -1443,6 +1480,8 @@ export interface SaasSystemDiagnostics {
     connectedClients: number;
     totalFramesPushed: number;
     uptimeSec: number;
+    sessionMode?: 'PRE_OPEN' | 'LIVE_TRADING' | 'OFF_HOURS';
+    sessionLabel?: string;
     jobs: StreamJobStat[];
   };
   desktopClient: {
@@ -1491,10 +1530,17 @@ export interface PaperPositionItem {
   unrealizedPnlPct: number;
   strategyTag: string;
   openedDate: string;
+  stopLossPrice?: number | null;
+  takeProfitPrice?: number | null;
+  distanceToStopPct?: number | null;
 }
 
 export interface PaperOrderItem {
   id: number;
+  execId?: string;
+  orderType?: 'MARKET_IOC' | 'LIMIT' | 'AUTO_SIGNAL' | 'AUTO_GUARD';
+  slippageBps?: number;
+  taxAndFeeDetail?: string;
   portfolioId: string;
   createdAt: string;
   tradingDate: string;
@@ -1517,9 +1563,13 @@ export interface PaperOrderRequest {
   name?: string;
   market?: 'ashare' | 'futures';
   action: 'buy_long' | 'sell_long' | 'open_short' | 'cover_short';
+  orderType?: 'MARKET_IOC' | 'LIMIT' | 'AUTO_SIGNAL' | 'AUTO_GUARD';
   quantity?: number;
-  capitalAllocationPct?: number; // 若未传quantity，可按组合净值比例自动算整手/手数!
-  price?: number;                // 未传则服务端拉取实时现价成交
+  capitalAllocationPct?: number; // 若未传quantity，可按组合净值比例自动算整手/手数
+  price?: number;                // 未传则按五档盘口最优价含滑点撮合
+  stopLossPrice?: number | null;
+  takeProfitPrice?: number | null;
+  slippageBps?: number;
   leverage?: number;
   strategyTag?: string;
   note?: string;
@@ -1532,6 +1582,7 @@ export interface PaperDeskOverviewResponse {
   portfolios: PaperPortfolioSummary[];
   positions: PaperPositionItem[];
   orders: PaperOrderItem[];
+  policy?: OmsExecutionPolicy;
   navHistory: {
     timestamp: string;
     totalEquity: number;
@@ -1890,6 +1941,8 @@ export interface GlobalCommandStripSummary {
   fact3of4Symbols: { symbol: string; name: string }[];
   activeJobsOk: number;
   totalJobs: number;
+  sessionMode?: 'PRE_OPEN' | 'LIVE_TRADING' | 'OFF_HOURS';
+  sessionLabel?: string;
 }
 
 export interface StreamJobTickPayload {

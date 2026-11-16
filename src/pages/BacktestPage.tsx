@@ -464,10 +464,10 @@ export default function BacktestPage({ onSelectStock, onNavigate }: BacktestPage
         strategyTag: STRATEGY_LABEL_MAP[result.strategy] || result.strategy,
         note: `F8回测信号转入 (收益${formatPct(metrics.totalReturnPct)} Sharpe ${metrics.sharpe.toFixed(2)})`,
       });
-      setPaperNotice(`已转入模拟实盘舱(15%仓位): ${result.code} ${result.name}`);
+      setPaperNotice(`已直通OMS实盘专户(15%仓位): ${result.code} ${result.name}`);
       setTimeout(() => setPaperNotice(null), 5000);
     } catch (e: any) {
-      setPaperNotice(`转入模拟盘失败: ${e?.message || '未知错误'}`);
+      setPaperNotice(`实盘执行下单失败: ${e?.message || '未知错误'}`);
     } finally {
       setPaperSending(false);
     }
@@ -916,7 +916,7 @@ export default function BacktestPage({ onSelectStock, onNavigate }: BacktestPage
         </div>
       ) : loading && !result ? (
         <div className="flex-1 bg-[#0e1117] p-10 text-center text-[12px] text-[#7d8796]">
-          正在拉取前复权历史日K并模拟 A股 T+1 撮合交易...
+          正在拉取前复权历史日K并回溯 A股 T+1 撮合轨迹...
         </div>
       ) : result && metrics ? (
         <div className="flex-1 min-h-0 flex flex-col gap-[1px] bg-[#222832] overflow-hidden">
@@ -1006,7 +1006,7 @@ export default function BacktestPage({ onSelectStock, onNavigate }: BacktestPage
                     onClick={() => onNavigate?.('saas-desk')}
                     className="underline text-[#ff9500]"
                   >
-                    前往模拟实盘舱
+                    前往 OMS 实盘交易柜台
                   </button>
                 </span>
               )}
@@ -1017,7 +1017,7 @@ export default function BacktestPage({ onSelectStock, onNavigate }: BacktestPage
                 disabled={paperSending}
                 className="px-2.5 h-[20px] rounded-[2px] border border-[#ff8800] bg-[#161b24] text-[#ff9500] hover:bg-[#ff8800] hover:text-[#090c10] font-bold disabled:opacity-50"
               >
-                {paperSending ? '下单中...' : '信号转入模拟盘'}
+                {paperSending ? '下单中...' : '信号直通实盘'}
               </button>
               <button
                 onClick={handleExportMarkdown}
