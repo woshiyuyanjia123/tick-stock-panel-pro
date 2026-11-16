@@ -11,13 +11,20 @@ const {
   Tray,
   ipcMain,
   nativeImage,
+  screen,
   shell,
   utilityProcess,
 } = require('electron');
 
 const isSmokeTest = process.argv.includes('--smoke-test');
+const gpuDisabledByFlag =
+  process.argv.includes('--disable-gpu') || process.env.TSP_DISABLE_GPU === '1';
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
+
+if (gpuDisabledByFlag) {
+  app.disableHardwareAcceleration();
+}
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(APP_ROOT, 'dist');
@@ -33,6 +40,8 @@ let serverPort = 3130;
 let isAlwaysOnTop = false;
 let isQuitting = false;
 let smokeTmpDir = null;
+let gpuCrashCount = 0;
+let gpuRelaunched = false;
 
 if (isWin) {
   app.setAppUserModelId('com.tspquant.tickstockpanelpro');
@@ -431,14 +440,33 @@ function setupTray() {
 
 const popoutWindows = new Set();
 
+function getPrimaryDisplayMetrics() {
+  const primary = screen.getPrimaryDisplay();
+  return {
+    workArea: primary.workArea,
+    scaleFactor: primary.scaleFactor,
+    bounds: primary.bounds,
+  };
+}
+
 function openPopoutWindow(tab = 'fact-fupeng', alwaysOnTop = false) {
   if (!serverPort || isSmokeTest) return null;
   const safeTab = typeof tab === 'string' && tab.trim() ? tab.trim() : 'fact-fupeng';
+  const { workArea } = getPrimaryDisplayMetrics();
+  const width = Math.min(1320, Math.round(workArea.width * 0.88));
+  const height = Math.min(840, Math.round(workArea.height * 0.9));
+  const minWidth = Math.min(860, workArea.width);
+  const minHeight = Math.min(500, workArea.height);
+  const x = workArea.x + Math.max(0, Math.floor((workArea.width - width) / 2));
+  const y = workArea.y + Math.max(0, Math.floor((workArea.height - height) / 2));
+
   const pop = new BrowserWindow({
-    width: 1320,
-    height: 840,
-    minWidth: 960,
-    minHeight: 620,
+    x,
+    y,
+    width,
+    height,
+    minWidth,
+    minHeight,
     show: false,
     backgroundColor: '#090c10',
     title: `TICK STOCK PANEL Pro · 独立副屏 (${safeTab})`,
@@ -482,14 +510,24 @@ function openPopoutWindow(tab = 'fact-fupeng', alwaysOnTop = false) {
 }
 
 function createMainWindow(port, initialTab = 'fact-fupeng', loadImmediately = true) {
+  const { workArea } = getPrimaryDisplayMetrics();
+  const width = Math.min(1600, Math.max(960, Math.round(workArea.width * 0.96)));
+  const height = Math.min(960, Math.max(560, Math.round(workArea.height * 0.95)));
+  const minWidth = Math.min(960, workArea.width);
+  const minHeight = Math.min(540, workArea.height);
+  const x = workArea.x + Math.max(0, Math.floor((workArea.width - width) / 2));
+  const y = workArea.y + Math.max(0, Math.floor((workArea.height - height) / 2));
+
   const win = new BrowserWindow({
-    width: 1600,
-    height: 960,
-    minWidth: 1200,
-    minHeight: 760,
+    x,
+    y,
+    width,
+    height,
+    minWidth,
+    minHeight,
     show: !isSmokeTest,
     backgroundColor: '#090c10',
-    title: 'TICK STOCK PANEL Pro (v1.2.0-enterprise)',
+    title: 'TICK STOCK PANEL Pro (v1.2.1-enterprise)',
     icon: fs.existsSync(ICON_PATH) ? ICON_PATH : undefined,
     autoHideMenuBar: !isMac,
     webPreferences: {
@@ -498,6 +536,18 @@ function createMainWindow(port, initialTab = 'fact-fupeng', loadImmediately = tr
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  let initialZoomApplied = false;
+  win.webContents.on('did-finish-load', () => {
+    if (initialZoomApplied || isSmokeTest) return;
+    const loadedUrl = win.webContents.getURL();
+    if (!loadedUrl.startsWith('http://127.0.0.1:')) return;
+    initialZoomApplied = true;
+    const metrics = getPrimaryDisplayMetrics();
+    if (metrics.workArea.height < 780 || metrics.workArea.width < 1380) {
+      win.webContents.setZoomFactor(metrics.workArea.height < 640 ? 0.82 : 0.90);
+    }
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -531,11 +581,13 @@ function createMainWindow(port, initialTab = 'fact-fupeng', loadImmediately = tr
     }`;
     void win.loadURL(startUrl);
   } else if (!isSmokeTest) {
-    const bootHtml = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#090c10;color:#dfe6f0;font-family:Consolas,monospace;display:flex;align-items:center;justify-content:center}.box{border:1px solid #222832;background:#0e1117;padding:24px 32px;min-width:440px}.tag{background:#ff8800;color:#090c10;font-weight:700;padding:2px 8px;display:inline-block;margin-bottom:12px;font-size:12px}.msg{color:#e5b567;font-size:13px}.sub{color:#7d8796;font-size:11px;margin-top:8px}</style></head><body><div class="box"><div class="tag">W·TSP 终端 v1.2.0-enterprise</div><div class="msg">正在挂载本地 SQLite WAL 实盘引擎与五路抓取守护...</div><div class="sub">127.0.0.1 · 机构量化决策与 OMS 实盘执行中枢</div></div></body></html>`;
+    const bootHtml = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#090c10;color:#dfe6f0;font-family:Consolas,monospace;display:flex;align-items:center;justify-content:center}.box{border:1px solid #222832;background:#0e1117;padding:24px 32px;min-width:440px}.tag{background:#ff8800;color:#090c10;font-weight:700;padding:2px 8px;display:inline-block;margin-bottom:12px;font-size:12px}.msg{color:#e5b567;font-size:13px}.sub{color:#7d8796;font-size:11px;margin-top:8px}</style></head><body><div class="box"><div class="tag">W·TSP 终端 v1.2.1-enterprise</div><div class="msg">正在挂载本地 SQLite WAL 实盘引擎与五路抓取守护...</div><div class="sub">127.0.0.1 · 机构量化决策与 OMS 实盘执行中枢</div></div></body></html>`;
     void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(bootHtml)}`);
   }
   return win;
 }
+
+ipcMain.handle('tsp:display-metrics', () => getPrimaryDisplayMetrics());
 
 ipcMain.handle('tsp:toggle-always-on-top', () => {
   isAlwaysOnTop = !isAlwaysOnTop;
@@ -564,6 +616,21 @@ ipcMain.handle('tsp:open-popout', (_evt, arg) => {
   const alwaysOnTop = typeof arg === 'object' ? Boolean(arg?.alwaysOnTop) : false;
   const win = openPopoutWindow(tab, alwaysOnTop);
   return Boolean(win);
+});
+
+app.on('child-process-gone', (_event, details) => {
+  if (!details || details.type !== 'GPU' || gpuDisabledByFlag || isSmokeTest) return;
+  gpuCrashCount += 1;
+  if (gpuCrashCount >= 2 && !gpuRelaunched) {
+    gpuRelaunched = true;
+    isQuitting = true;
+    stopBackendProcess();
+    const extraArgs = process.argv.slice(1).filter((a) => a !== '--disable-gpu');
+    extraArgs.push('--disable-gpu');
+    app.releaseSingleInstanceLock();
+    app.relaunch({ args: extraArgs });
+    app.exit(0);
+  }
 });
 
 app.on('second-instance', () => {

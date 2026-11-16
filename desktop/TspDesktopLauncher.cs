@@ -235,7 +235,7 @@ namespace TspProDesktop
             Controls.Add(badge);
 
             _titleLabel = new Label();
-            _titleLabel.Text = "TICK STOCK PANEL PRO · 机构量化桌面终端 v1.1";
+            _titleLabel.Text = "TICK STOCK PANEL PRO · 机构量化桌面终端 v1.2.1-enterprise";
             _titleLabel.Font = new Font("Microsoft YaHei UI", 12f, FontStyle.Bold);
             _titleLabel.ForeColor = Color.FromArgb(240, 244, 250);
             _titleLabel.AutoSize = true;
@@ -251,7 +251,7 @@ namespace TspProDesktop
             Controls.Add(subTitle);
 
             _statusLabel = new Label();
-            _statusLabel.Text = "W·TSP 机构量化终端 v1.1 正在初始化 SQLite WAL 引擎与实时流总线...";
+            _statusLabel.Text = "W·TSP 机构量化终端 v1.2.1-enterprise 正在初始化 SQLite WAL 引擎与实时流总线...";
             _statusLabel.Font = new Font("Microsoft YaHei UI", 9.5f, FontStyle.Regular);
             _statusLabel.ForeColor = Color.FromArgb(200, 210, 224);
             _statusLabel.AutoSize = false;
@@ -550,13 +550,31 @@ namespace TspProDesktop
             }
         }
 
+        private static Rectangle GetClampedMainWindowBounds(out Size minimumSize)
+        {
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            minimumSize = new Size(Math.Min(960, wa.Width), Math.Min(540, wa.Height));
+            int width = Math.Min(1600, Math.Max(minimumSize.Width, (int)(wa.Width * 0.96)));
+            int height = Math.Min(960, Math.Max(minimumSize.Height, (int)(wa.Height * 0.95)));
+            int x = wa.X + Math.Max(0, (wa.Width - width) / 2);
+            int y = wa.Y + Math.Max(0, (wa.Height - height) / 2);
+            return new Rectangle(x, y, width, height);
+        }
+
         private void LaunchAppWindow(string targetUrl, IntPtr excludeHwnd)
         {
+            Size minimumSize;
+            Rectangle winBounds = GetClampedMainWindowBounds(out minimumSize);
+
             ProcessStartInfo psi = new ProcessStartInfo();
             psi.FileName = _browserExe;
             psi.Arguments = string.Format(
-                "--app=\"{0}\" --window-size=1640,980 --user-data-dir=\"{1}\" --no-first-run --no-default-browser-check --disable-features=msEdgeSidebarV2",
+                "--app=\"{0}\" --window-size={1},{2} --window-position={3},{4} --user-data-dir=\"{5}\" --no-first-run --no-default-browser-check --disable-features=msEdgeSidebarV2",
                 targetUrl,
+                winBounds.Width,
+                winBounds.Height,
+                winBounds.X,
+                winBounds.Y,
                 _profileDir);
             psi.WorkingDirectory = _projectRoot;
             psi.UseShellExecute = false;

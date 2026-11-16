@@ -417,15 +417,27 @@ export function getSqliteDiagnostics(
     }
   });
 
+  const desktopCandidates =
+    process.platform === 'darwin'
+      ? [
+          '/Applications/TICK STOCK PANEL Pro.app',
+          path.resolve(APP_ROOT_DIR, 'release', 'mac-arm64', 'TICK STOCK PANEL Pro.app'),
+          path.resolve(APP_ROOT_DIR, 'release', 'mac', 'TICK STOCK PANEL Pro.app'),
+        ]
+      : [
+          path.resolve(APP_ROOT_DIR, 'release', 'win-unpacked', 'TICK STOCK PANEL Pro.exe'),
+          path.resolve(APP_ROOT_DIR, 'TSP_Pro_Desktop.exe'),
+        ];
+
+  const envDesktopBin = String(process.env.TSP_DESKTOP_BIN || '').trim();
   const exePath =
-    process.env.TSP_DESKTOP_BIN ||
-    (process.platform === 'darwin'
-      ? '/Applications/TICK STOCK PANEL Pro.app'
-      : path.resolve(APP_ROOT_DIR, 'TSP_Pro_Desktop.exe'));
+    envDesktopBin ||
+    desktopCandidates.find((candidate) => fs.existsSync(candidate)) ||
+    desktopCandidates[0];
   const exeExists = Boolean(process.env.TSP_ELECTRON_SHELL === '1' || fs.existsSync(exePath));
 
   return {
-    version: 'v1.2.0-enterprise',
+    version: 'v1.2.1-enterprise',
     dbPath: DB_PATH,
     journalMode,
     dbSizeBytes,
@@ -440,7 +452,7 @@ export function getSqliteDiagnostics(
     desktopClient: {
       exePath,
       exeExists,
-      launchCommand: 'TSP_Pro_Desktop.exe',
+      launchCommand: path.basename(exePath),
     },
     currentUser: user,
     availableSeats: getAvailableSeats(),

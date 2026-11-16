@@ -197,3 +197,49 @@ body,
 ::-webkit-scrollbar-thumb:hover {
   background: #3e4b61;
 }
+
+/* Hide scrollbars cleanly on top navigation & command strips while preserving wheel/touch scroll */
+.tsp-no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tsp-no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* High-DPI Compact Density Mode (1280x672 / 1706x672 / manual [紧凑] toggle; keeps 100vw x 100vh full-bleed) */
+html.tsp-compact .w-header {
+  height: 23px;
+  padding: 0 8px;
+}
+
+html.tsp-compact .w-tab {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+html.tsp-compact .w-table {
+  font-size: 11px;
+}
+
+html.tsp-compact .w-table thead th {
+  height: 22px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+html.tsp-compact .w-table tbody tr {
+  height: 22px;
+}
+
+html.tsp-compact .w-table tbody td {
+  padding: 0 6px;
+}
+
+html.tsp-compact .tsp-chart-compact {
+  height: 170px;
+}

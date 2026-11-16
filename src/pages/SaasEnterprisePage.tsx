@@ -1279,7 +1279,7 @@ export default function SaasEnterprisePage({
           <div className="flex items-center gap-1.5 pr-3 border-r border-[#222832] h-full">
             <span className="w-[3px] h-3.5 bg-[#ff8800]" />
             <span className="text-[11px] font-bold text-[#ff8800] tracking-tight">ENTERPRISE SAAS DESK</span>
-            <span className="text-[10px] text-[#7d8796] tabular-nums">{diagnostics?.version || 'v1.0.0-enterprise'}</span>
+            <span className="text-[10px] text-[#7d8796] tabular-nums">{diagnostics?.version || 'v1.2.1-enterprise'}</span>
           </div>
 
           <button
@@ -1611,35 +1611,35 @@ export default function SaasEnterprisePage({
           {/* Main Split: Left/Center Positions + NAV & Blotter | Right Order Ticket & Signal Launcher */}
           <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-[1px] bg-[#222832] overflow-hidden">
             {/* Left/Center Area */}
-            <div className="flex-1 min-w-0 flex flex-col gap-[1px] bg-[#222832] overflow-hidden">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-[1px] bg-[#222832] overflow-hidden">
               {/* Real-time MTM Positions Table */}
-              <div className="bg-[#0e1117] flex flex-col min-h-[190px] flex-[1.1] overflow-hidden">
+              <div className="bg-[#0e1117] flex flex-col min-h-[145px] flex-1 overflow-hidden">
                 <PaneHeader
                   title="实时盯市持仓表 (A股 T+1 锁仓校验 · 期货 T+0 双向保证金)"
                   badge={`${paperDesk?.positions?.length || 0} 笔持仓`}
                   right={<span>点击A股代码查看K线与分时</span>}
                 />
-                <div className="flex-1 overflow-auto">
-                  <table className="w-table">
+                <div className="flex-1 min-h-0 overflow-auto">
+                  <table className="w-table [&_th]:!px-1.5 [&_th]:!py-1 [&_th]:!text-[11px] [&_td]:!px-1.5 [&_td]:!py-1 [&_td]:!text-[11px]">
                     <thead>
                       <tr>
                         <th className="text-left">代码</th>
                         <th className="text-left">名称</th>
-                        <th className="text-left">市场/方向</th>
-                        <th className="text-right">总持仓 / 可平量</th>
-                        <th className="text-right">持仓均价</th>
-                        <th className="text-right">实时最新价</th>
+                        <th className="text-left">类型/方向</th>
+                        <th className="text-right">持仓/可平</th>
+                        <th className="text-right">均价</th>
+                        <th className="text-right">最新价</th>
                         <th className="text-right">浮动盈亏</th>
-                        <th className="text-right">盈亏比例%</th>
-                        <th className="text-right">证伪止损 / 缓冲%</th>
-                        <th className="text-left">策略来源标签</th>
+                        <th className="text-right">盈亏%</th>
+                        <th className="text-right">止损/缓冲%</th>
+                        <th className="text-left">策略来源</th>
                         <th className="text-center">平仓操作</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(paperDesk?.positions || []).length === 0 ? (
                         <tr>
-                          <td colSpan={11} className="text-center py-6 text-[#6d7787]">
+                          <td colSpan={11} className="text-center py-4 text-[#6d7787]">
                             当前专户暂无持仓 — 可在右侧委托单直接下单或一键导入策略信号建仓
                           </td>
                         </tr>
@@ -1664,38 +1664,40 @@ export default function SaasEnterprisePage({
                                   <span className="text-[#e5b567] font-semibold">{pos.symbol}</span>
                                 )}
                               </td>
-                              <td className="text-[#dfe6f0]">{pos.name}</td>
+                              <td className="text-[#dfe6f0] max-w-[78px] truncate" title={pos.name}>
+                                {pos.name}
+                              </td>
                               <td>
                                 <span
-                                  className={`px-1 py-0.5 text-[10px] border ${
+                                  className={`px-1 py-0.5 text-[10px] border whitespace-nowrap ${
                                     pos.side === 'long'
                                       ? 'bg-[#211013] border-[#5c1f24] text-[#ff3535]'
                                       : 'bg-[#0b1f16] border-[#1f5c3a] text-[#00c853]'
                                   }`}
                                 >
-                                  {pos.market === 'ashare' ? 'A股 T+1' : '期货 T+0'} · {pos.side === 'long' ? '多' : '空'}
+                                  {pos.market === 'ashare' ? 'A股' : '期货'}·{pos.side === 'long' ? '多' : '空'}
                                   {pos.leverage > 1 ? ` ${pos.leverage}x` : ''}
                                 </span>
                               </td>
-                              <td className="text-right tabular-nums">
+                              <td className="text-right tabular-nums whitespace-nowrap">
                                 <span className="text-[#dfe6f0] font-semibold">{pos.quantity}</span>
-                                <span className="text-[#6d7787] mx-1">/</span>
+                                <span className="text-[#6d7787] mx-0.5">/</span>
                                 <span className={isLockedT1 ? 'text-[#f0b90b]' : 'text-[#00c853]'}>
                                   {pos.availableQuantity}
                                 </span>
                                 {isLockedT1 ? (
-                                  <span className="ml-1.5 px-1 py-0.5 text-[9px] bg-[#211a0e] border border-[#5e4519] text-[#f0b90b]">
-                                    T+1锁仓
+                                  <span className="ml-1 px-1 py-0.5 text-[9px] bg-[#211a0e] border border-[#5e4519] text-[#f0b90b]">
+                                    T+1锁
                                   </span>
                                 ) : pos.market === 'futures' ? (
-                                  <span className="ml-1.5 px-1 py-0.5 text-[9px] bg-[#0e1b29] border border-[#22476b] text-[#4da3ff]">
-                                    T+0可平
+                                  <span className="ml-1 px-1 py-0.5 text-[9px] bg-[#0e1b29] border border-[#22476b] text-[#4da3ff]">
+                                    T+0
                                   </span>
                                 ) : null}
                               </td>
-                              <td className="text-right tabular-nums text-[#cfd8e3]">{fmtNum(pos.avgCost, 3)}</td>
+                              <td className="text-right tabular-nums text-[#cfd8e3]">{fmtNum(pos.avgCost, 2)}</td>
                               <td className={`text-right tabular-nums font-semibold ${colorUpDown(pos.unrealizedPnl)}`}>
-                                {fmtNum(pos.lastPrice, 3)}
+                                {fmtNum(pos.lastPrice, 2)}
                               </td>
                               <td className={`text-right tabular-nums font-semibold ${colorUpDown(pos.unrealizedPnl)}`}>
                                 {fmtSignedCurrency(pos.unrealizedPnl)}
@@ -1703,7 +1705,7 @@ export default function SaasEnterprisePage({
                               <td className={`text-right tabular-nums font-semibold ${colorUpDown(pos.unrealizedPnlPct)}`}>
                                 {fmtPct(pos.unrealizedPnlPct)}
                               </td>
-                              <td className="text-right tabular-nums">
+                              <td className="text-right tabular-nums whitespace-nowrap">
                                 {isEditingStops ? (
                                   <div className="flex items-center justify-end gap-1">
                                     <input
@@ -1712,7 +1714,7 @@ export default function SaasEnterprisePage({
                                       placeholder="止损"
                                       value={editingStopVal}
                                       onChange={(e) => setEditingStopVal(e.target.value)}
-                                      className="w-16 h-[20px] px-1 bg-[#090c10] border border-[#ff8800] text-[10px] text-[#f0b90b]"
+                                      className="w-14 h-[20px] px-1 bg-[#090c10] border border-[#ff8800] text-[10px] text-[#f0b90b]"
                                     />
                                     <input
                                       type="number"
@@ -1720,7 +1722,7 @@ export default function SaasEnterprisePage({
                                       placeholder="止盈"
                                       value={editingTpVal}
                                       onChange={(e) => setEditingTpVal(e.target.value)}
-                                      className="w-16 h-[20px] px-1 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#00c853]"
+                                      className="w-14 h-[20px] px-1 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#00c853]"
                                     />
                                     <button
                                       type="button"
@@ -1755,7 +1757,7 @@ export default function SaasEnterprisePage({
                                         {fmtNum(pos.stopLossPrice, 2)}
                                         {pos.distanceToStopPct !== null &&
                                           pos.distanceToStopPct !== undefined && (
-                                            <span className="ml-1 text-[10px] text-[#8b95a5]">
+                                            <span className="ml-0.5 text-[10px] text-[#8b95a5]">
                                               ({pos.distanceToStopPct.toFixed(1)}%)
                                             </span>
                                           )}
@@ -1770,15 +1772,15 @@ export default function SaasEnterprisePage({
                                         setEditingStopVal(pos.stopLossPrice ? String(pos.stopLossPrice) : '');
                                         setEditingTpVal(pos.takeProfitPrice ? String(pos.takeProfitPrice) : '');
                                       }}
-                                      className="px-1 py-0.5 text-[9px] bg-[#161b24] border border-[#2b3444] hover:border-[#ff8800] text-[#8b95a5] hover:text-[#ff8800]"
+                                      className="px-1 py-0.5 text-[9px] bg-[#161b24] border border-[#2b3444] hover:border-[#ff8800] text-[#8b95a5] hover:text-[#ff8800] shrink-0"
                                     >
                                       设止损
                                     </button>
                                   </div>
                                 )}
                               </td>
-                              <td>
-                                <span className="px-1.5 py-0.5 text-[10px] bg-[#161b24] border border-[#252c38] text-[#4da3ff]">
+                              <td className="max-w-[92px] truncate" title={pos.strategyTag || '手工交易'}>
+                                <span className="px-1 py-0.5 text-[10px] bg-[#161b24] border border-[#252c38] text-[#4da3ff]">
                                   {pos.strategyTag || '手工交易'}
                                 </span>
                               </td>
@@ -1818,31 +1820,31 @@ export default function SaasEnterprisePage({
               </div>
 
               {/* Bottom: NAV Curve + Orders Audit */}
-              <div className="flex-1 min-h-[200px] grid grid-cols-1 xl:grid-cols-12 gap-[1px] bg-[#222832] overflow-hidden">
+              <div className="flex-1 min-h-[140px] grid grid-cols-1 xl:grid-cols-12 gap-[1px] bg-[#222832] overflow-hidden">
                 {/* NAV Chart */}
-                <div className="xl:col-span-5 bg-[#0e1117] flex flex-col overflow-hidden">
+                <div className="xl:col-span-4 bg-[#0e1117] flex flex-col min-h-0 overflow-hidden">
                   <PaneHeader
                     title="组合实时净值曲线"
                     badge={`${paperDesk?.navHistory?.length || 0} 点`}
                   />
-                  <div ref={navChartRef} className="flex-1 min-h-[160px] bg-[#0d1015]" />
+                  <div ref={navChartRef} className="flex-1 min-h-[120px] bg-[#0d1015]" />
                 </div>
 
                 {/* Order & Fill Audit Blotter */}
-                <div className="xl:col-span-7 bg-[#0e1117] flex flex-col overflow-hidden">
+                <div className="xl:col-span-8 bg-[#0e1117] flex flex-col min-h-0 overflow-hidden">
                   <PaneHeader
                     title="委托与成交流水审计表"
                     badge={`${paperDesk?.orders?.length || 0} 笔`}
                   />
-                  <div className="flex-1 overflow-auto">
-                    <table className="w-table">
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    <table className="w-table [&_th]:!px-1.5 [&_th]:!py-1 [&_th]:!text-[11px] [&_td]:!px-1.5 [&_td]:!py-1 [&_td]:!text-[11px]">
                       <thead>
                         <tr>
                           <th className="text-left">成交时间</th>
-                          <th className="text-left">合同 / 类型</th>
-                          <th className="text-left">代码 / 名称</th>
-                          <th className="text-left">买卖方向</th>
-                          <th className="text-right">成交价 / 滑点</th>
+                          <th className="text-left">合同/类型</th>
+                          <th className="text-left">代码/名称</th>
+                          <th className="text-left">方向</th>
+                          <th className="text-right">成交价/滑点</th>
                           <th className="text-right">数量</th>
                           <th className="text-right">税费明细</th>
                           <th className="text-right">实现盈亏</th>
@@ -1852,16 +1854,18 @@ export default function SaasEnterprisePage({
                       <tbody>
                         {(paperDesk?.orders || []).length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="text-center py-6 text-[#6d7787]">
+                            <td colSpan={9} className="text-center py-4 text-[#6d7787]">
                               暂无成交流水
                             </td>
                           </tr>
                         ) : (
                           (paperDesk?.orders || []).map((ord) => (
                             <tr key={ord.id}>
-                              <td className="text-[#8b95a5] tabular-nums text-[11px]">{shortTime(ord.createdAt)}</td>
-                              <td className="tabular-nums text-[10px]">
-                                <div className="text-[#cfd8e3] font-semibold">{ord.execId || `ORD-${ord.id}`}</div>
+                              <td className="text-[#8b95a5] tabular-nums text-[10px] whitespace-nowrap">
+                                {shortTime(ord.createdAt).slice(5)}
+                              </td>
+                              <td className="tabular-nums text-[10px] whitespace-nowrap">
+                                <span className="text-[#cfd8e3] font-semibold mr-1">{ord.execId || `ORD-${ord.id}`}</span>
                                 <span
                                   className={`px-1 border text-[9px] ${
                                     ord.orderType === 'AUTO_GUARD'
@@ -1876,11 +1880,11 @@ export default function SaasEnterprisePage({
                                   {ord.orderType || 'MARKET_IOC'}
                                 </span>
                               </td>
-                              <td>
+                              <td className="whitespace-nowrap">
                                 <span className="text-[#e5b567] font-semibold mr-1">{ord.symbol}</span>
                                 <span className="text-[#cfd8e3]">{ord.name}</span>
                               </td>
-                              <td>
+                              <td className="whitespace-nowrap">
                                 <span
                                   className={`px-1 py-0.5 text-[10px] border ${
                                     ord.action === 'buy_long' || ord.action === 'cover_short'
@@ -1891,28 +1895,28 @@ export default function SaasEnterprisePage({
                                   {ACTION_LABEL[ord.action] || ord.action}
                                 </span>
                               </td>
-                              <td className="text-right tabular-nums">
-                                <div>{fmtNum(ord.fillPrice, 3)}</div>
-                                <div className="text-[9px] text-[#7d8796]">
-                                  {fmtNum(ord.slippageBps ?? 0, 1)}bps
-                                </div>
+                              <td className="text-right tabular-nums whitespace-nowrap">
+                                <span>{fmtNum(ord.fillPrice, 2)}</span>
+                                <span className="ml-1 text-[9px] text-[#7d8796]">
+                                  /{fmtNum(ord.slippageBps ?? 0, 1)}bp
+                                </span>
                               </td>
                               <td className="text-right tabular-nums">{ord.quantity}</td>
                               <td
-                                className="text-right tabular-nums text-[#f0b90b]"
+                                className="text-right tabular-nums text-[#f0b90b] whitespace-nowrap"
                                 title={ord.taxAndFeeDetail || `合计费税 ${fmtNum(ord.fee, 2)}`}
                               >
-                                <div>{fmtNum(ord.fee, 2)}</div>
+                                <span>{fmtNum(ord.fee, 2)}</span>
                                 {ord.taxAndFeeDetail && (
-                                  <div className="text-[9px] text-[#7d8796] max-w-[115px] truncate ml-auto">
-                                    {ord.taxAndFeeDetail}
-                                  </div>
+                                  <span className="ml-1 text-[9px] text-[#7d8796] hidden 2xl:inline">
+                                    ({ord.taxAndFeeDetail})
+                                  </span>
                                 )}
                               </td>
-                              <td className={`text-right tabular-nums font-semibold ${colorUpDown(ord.realizedPnl)}`}>
+                              <td className={`text-right tabular-nums font-semibold whitespace-nowrap ${colorUpDown(ord.realizedPnl)}`}>
                                 {ord.realizedPnl === 0 ? '--' : fmtSignedCurrency(ord.realizedPnl)}
                               </td>
-                              <td className="text-[#8b95a5] text-[11px] max-w-[180px] truncate" title={`${ord.strategyTag} · ${ord.note}`}>
+                              <td className="text-[#8b95a5] text-[10px] max-w-[150px] truncate" title={`${ord.strategyTag} · ${ord.note}`}>
                                 <span className="text-[#4da3ff] mr-1">[{ord.strategyTag}]</span>
                                 {ord.note}
                               </td>
@@ -1927,13 +1931,14 @@ export default function SaasEnterprisePage({
             </div>
 
             {/* Right Docked Order Ticket + Live 5-Gear Book + Quick Signal Launcher */}
-            <div className="w-full lg:w-[328px] shrink-0 bg-[#0e1117] flex flex-col overflow-hidden">
+            <div className="w-full lg:w-[300px] xl:w-[320px] shrink-0 bg-[#0e1117] flex flex-col min-h-0 overflow-hidden">
               <PaneHeader
                 title="OMS 实盘委托报单台"
                 badge={`${orderMarket === 'ashare' ? 'A股T+1' : '期货T+0'} · ${orderType === 'LIMIT' ? '限价' : '五档IOC'}`}
               />
 
-              <div className="p-2.5 space-y-2 border-b border-[#222832] overflow-y-auto shrink-0">
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-2 space-y-1.5">
                 {/* Market Toggle */}
                 <div className="grid grid-cols-2 gap-[1px] bg-[#222832] border border-[#222832]">
                   <button
@@ -2325,7 +2330,80 @@ export default function SaasEnterprisePage({
                     className="h-[25px] px-1.5 bg-[#090c10] border border-[#2b3444] text-[10px] text-[#dfe6f0] focus:outline-none focus:border-[#ff8800]"
                   />
                 </div>
+                </div>
 
+                {/* One-Click Signal Launcher (Scrollable inside upper OMS pane) */}
+                <div className="border-t border-[#222832]">
+                  <PaneHeader
+                    title="一键信号建仓快捷区"
+                    badge={`${quickSignals.length} 信号`}
+                    right={
+                      <button
+                        type="button"
+                        onClick={loadQuickSignals}
+                        disabled={loadingSignals}
+                        className="text-[10px] text-[#ff8800] hover:underline"
+                      >
+                        {loadingSignals ? '抓取中...' : '刷新信号'}
+                      </button>
+                    }
+                  />
+                  <div className="divide-y divide-[#1a202b]">
+                    {quickSignals.length === 0 ? (
+                      <div className="p-2.5 text-[11px] text-[#6d7787] text-center">
+                        {loadingSignals ? '正在汇聚 CPO五节点 / PM预期差 / PandaAI Top3...' : '暂无实时策略信号'}
+                      </div>
+                    ) : (
+                      quickSignals.map((sig) => (
+                        <div key={sig.id} className="p-2 hover:bg-[#11151d] space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="px-1 py-0.5 text-[9px] bg-[#161b24] border border-[#2b3444] text-[#ff8800] shrink-0">
+                                {sig.source}
+                              </span>
+                              <span className="text-[11px] font-bold text-[#e5b567] shrink-0">{sig.symbol}</span>
+                              <span className="text-[11px] text-[#dfe6f0] truncate">{sig.name}</span>
+                            </div>
+                            <span
+                              className={`text-[10px] font-semibold shrink-0 ${
+                                sig.action === 'open_short' ? 'text-[#00c853]' : 'text-[#ff3535]'
+                              }`}
+                            >
+                              {sig.action === 'open_short' ? '做空' : '做多'} {sig.allocationPct}%
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-[#7d8796] truncate" title={sig.rationale}>
+                            {sig.rationale}
+                          </div>
+                          <div className="flex items-center justify-between gap-1 pt-0.5">
+                            <span className="text-[10px] text-[#4da3ff] tabular-nums">{sig.metricBadge}</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleImportQuickSignal(sig, false)}
+                                className="px-1.5 py-0.5 text-[10px] bg-[#161b24] border border-[#2b3444] hover:border-[#ff8800] text-[#cfd8e3]"
+                              >
+                                一键导入策略信号建仓
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleImportQuickSignal(sig, true)}
+                                disabled={submittingOrder}
+                                className="px-1.5 py-0.5 text-[10px] bg-[#211508] border border-[#ff8800] text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10] font-semibold"
+                              >
+                                直发
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sticky Bottom Footer: Pre-Trade Risk Card + Submit Button + Order Feedback */}
+              <div className="shrink-0 border-t border-[#222832] bg-[#0e1117] p-2 space-y-1.5">
                 {/* Pre-Trade穿透风控试算卡 */}
                 {preTradeCalc.estFillPx > 0 && (
                   <div className="bg-[#0b0e14] border border-[#222832] px-2 py-1 text-[10px] tabular-nums space-y-0.5">
@@ -2371,7 +2449,7 @@ export default function SaasEnterprisePage({
 
                 {orderFeedback && (
                   <div
-                    className={`px-2 py-1.5 text-[11px] border leading-snug ${
+                    className={`px-2 py-1 text-[10px] border leading-snug ${
                       orderFeedback.ok
                         ? 'bg-[#0b1f16] border-[#1f5c3a] text-[#00c853]'
                         : 'bg-[#211013] border-[#662229] text-[#ff3535]'
@@ -2379,73 +2457,6 @@ export default function SaasEnterprisePage({
                   >
                     {orderFeedback.text}
                   </div>
-                )}
-              </div>
-
-              {/* One-Click Signal Launcher */}
-              <PaneHeader
-                title="一键信号建仓快捷区"
-                badge={`${quickSignals.length} 信号`}
-                right={
-                  <button
-                    type="button"
-                    onClick={loadQuickSignals}
-                    disabled={loadingSignals}
-                    className="text-[10px] text-[#ff8800] hover:underline"
-                  >
-                    {loadingSignals ? '抓取中...' : '刷新信号'}
-                  </button>
-                }
-              />
-              <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-[#1a202b]">
-                {quickSignals.length === 0 ? (
-                  <div className="p-3 text-[11px] text-[#6d7787] text-center">
-                    {loadingSignals ? '正在汇聚 CPO五节点 / PM预期差 / PandaAI Top3...' : '暂无实时策略信号'}
-                  </div>
-                ) : (
-                  quickSignals.map((sig) => (
-                    <div key={sig.id} className="p-2 hover:bg-[#11151d] space-y-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="px-1 py-0.5 text-[9px] bg-[#161b24] border border-[#2b3444] text-[#ff8800] shrink-0">
-                            {sig.source}
-                          </span>
-                          <span className="text-[11px] font-bold text-[#e5b567] shrink-0">{sig.symbol}</span>
-                          <span className="text-[11px] text-[#dfe6f0] truncate">{sig.name}</span>
-                        </div>
-                        <span
-                          className={`text-[10px] font-semibold shrink-0 ${
-                            sig.action === 'open_short' ? 'text-[#00c853]' : 'text-[#ff3535]'
-                          }`}
-                        >
-                          {sig.action === 'open_short' ? '做空' : '做多'} {sig.allocationPct}%
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-[#7d8796] truncate" title={sig.rationale}>
-                        {sig.rationale}
-                      </div>
-                      <div className="flex items-center justify-between gap-1 pt-0.5">
-                        <span className="text-[10px] text-[#4da3ff] tabular-nums">{sig.metricBadge}</span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleImportQuickSignal(sig, false)}
-                            className="px-1.5 py-0.5 text-[10px] bg-[#161b24] border border-[#2b3444] hover:border-[#ff8800] text-[#cfd8e3]"
-                          >
-                            一键导入策略信号建仓
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleImportQuickSignal(sig, true)}
-                            disabled={submittingOrder}
-                            className="px-1.5 py-0.5 text-[10px] bg-[#211508] border border-[#ff8800] text-[#ff8800] hover:bg-[#ff8800] hover:text-[#090c10] font-semibold"
-                          >
-                            直发
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
                 )}
               </div>
             </div>

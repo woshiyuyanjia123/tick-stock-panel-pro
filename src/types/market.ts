@@ -1387,7 +1387,7 @@ export interface AltConsensusBacktestResponse {
   }[];
 }
 
-// ================= V6–V8 (v1.2.0-enterprise) 多租户量化SaaS · SQLite · 实时流 · 机构OMS实盘交易柜台 =================
+// ================= V6–V8 (v1.2.1-enterprise) 多租户量化SaaS · SQLite · 实时流 · 机构OMS实盘交易柜台 =================
 
 export interface OmsOrderBookLevel {
   level: number; // 1..5

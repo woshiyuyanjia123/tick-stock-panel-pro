@@ -572,11 +572,17 @@ function AltBacktestTerminal({
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-[1px] bg-[#222832] shrink-0">
-        <div className="xl:col-span-5 bg-[#0d1015] h-[220px]" ref={leadLagChartRef} />
-        <div className="xl:col-span-7 bg-[#0d1015] h-[220px]" ref={equityChartRef} />
+        <div
+          className="xl:col-span-5 bg-[#0d1015] h-[165px] [@media(min-height:780px)]:h-[220px] tsp-chart-compact"
+          ref={leadLagChartRef}
+        />
+        <div
+          className="xl:col-span-7 bg-[#0d1015] h-[165px] [@media(min-height:780px)]:h-[220px] tsp-chart-compact"
+          ref={equityChartRef}
+        />
       </div>
 
-      <div className="w-pane flex-1 min-h-[180px] flex flex-col overflow-hidden">
+      <div className="w-pane flex-1 min-h-[140px] flex flex-col overflow-hidden">
         <PaneHeader
           title="联立事件交易明细 Blotter"
           badge={`${result?.trades?.length ?? 0} 笔`}
@@ -1269,9 +1275,9 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
   return (
     <div className="h-full flex flex-col bg-[#090c10] text-[#dfe6f0] overflow-hidden select-none">
       {/* Top 28px Wind Sub-Tab Ribbon */}
-      <div className="h-[28px] bg-[#161b24] border-b border-[#222832] flex items-center justify-between shrink-0 overflow-x-auto">
-        <div className="flex items-center h-full shrink-0">
-          <div className="px-2.5 h-full flex items-center gap-1.5 border-r border-[#222832] bg-[#0e1117]">
+      <div className="h-[28px] bg-[#161b24] border-b border-[#222832] flex items-center justify-between shrink-0 overflow-hidden">
+        <div className="flex items-center h-full flex-1 min-w-0 overflow-x-auto tsp-no-scrollbar">
+          <div className="px-2.5 h-full flex items-center gap-1.5 border-r border-[#222832] bg-[#0e1117] shrink-0">
             <span className="text-[10px] font-bold px-1 bg-[#ff8800] text-[#090c10]">F12</span>
             <span className="text-[11px] font-bold text-[#ff8800] whitespace-nowrap">超前认知定价 · CPO传导</span>
           </div>
@@ -1699,7 +1705,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
               </div>
 
               {/* Pane 2: 2nd-Order Hardware Residual Lag Scanner */}
-              <div className="w-pane flex-1 min-h-[210px] flex flex-col overflow-hidden">
+              <div className="w-pane flex-1 min-h-[145px] flex flex-col overflow-hidden">
                 <PaneHeader
                   title="节点2 二阶算力硬件滞后补涨残差扫描 (液冷/AI PCB/国产ASIC/光芯片)"
                   badge={`${sortedSecondOrder.length} 只标的`}
@@ -2072,7 +2078,10 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
               </div>
 
               {/* 3-Line Equity Curve + Drawdown */}
-              <div className="bg-[#0d1015] h-[230px] shrink-0" ref={cpoChartRef} />
+              <div
+                className="bg-[#0d1015] h-[175px] [@media(min-height:780px)]:h-[230px] tsp-chart-compact shrink-0"
+                ref={cpoChartRef}
+              />
 
               {/* 4-Gate Trap Filter Attribution Bar */}
               {cpoBtResult?.gateAttribution?.length ? (
@@ -2105,7 +2114,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
               ) : null}
 
               {/* 26px Trade Blotter */}
-              <div className="w-pane flex-1 min-h-[150px] flex flex-col overflow-hidden">
+              <div className="w-pane flex-1 min-h-[130px] flex flex-col overflow-hidden">
                 <PaneHeader
                   title="门控传导策略成交明细 Blotter"
                   badge={`${cpoBtResult?.trades?.length ?? 0} 笔`}
@@ -2440,7 +2449,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
             </div>
 
             {/* Global & Domestic Options IV Skew & PCR Matrix */}
-            <div className="w-pane flex-1 min-h-[220px] flex flex-col overflow-hidden">
+            <div className="w-pane flex-1 min-h-[150px] flex flex-col overflow-hidden">
               <PaneHeader
                 title="全球 & 国内ETF期权隐波偏度矩阵 (Deribit DVOL/25D Skew · 159915/510300/510050 · USD/CNH)"
                 badge="聪明钱尾部定价"
@@ -2702,7 +2711,10 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
           </div>
 
           <div className="xl:col-span-6 min-h-0 flex flex-col gap-[1px] bg-[#222832] overflow-hidden">
-            <div className="bg-[#0d1015] h-[200px] shrink-0" ref={tsChartRef} />
+            <div
+              className="bg-[#0d1015] h-[160px] [@media(min-height:780px)]:h-[200px] tsp-chart-compact shrink-0"
+              ref={tsChartRef}
+            />
             <div className="flex-1 min-h-0 overflow-hidden">
               <AltBacktestTerminal
                 title="产业现货期限结构 (Back/Contango) -> A股龙头 Lead-Lag 回测"
@@ -2782,7 +2794,7 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
           <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-[1px] bg-[#222832] overflow-hidden">
             {/* Left Split: Ingestion Diagnostics + Token Config + EGO CLI */}
             <div className="xl:col-span-6 min-h-0 flex flex-col gap-[1px] bg-[#222832] overflow-auto">
-              <div className="w-pane flex-1 min-h-[240px] flex flex-col overflow-hidden">
+              <div className="w-pane flex-1 min-h-[150px] flex flex-col overflow-hidden">
                 <PaneHeader
                   title="零付费免Key实时抓取源诊断矩阵 (JSON REST + SSR + EGO静默守护)"
                   badge={`${altOverview?.feeds?.length ?? 0} 通道`}
@@ -2950,8 +2962,11 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
 
             {/* Right Split: JSONL Historical Snapshot Log Viewer & Mini Trend */}
             <div className="xl:col-span-6 min-h-0 flex flex-col gap-[1px] bg-[#222832] overflow-hidden">
-              <div className="bg-[#0d1015] h-[200px] shrink-0" ref={snapshotChartRef} />
-              <div className="w-pane flex-1 min-h-[200px] flex flex-col overflow-hidden">
+              <div
+                className="bg-[#0d1015] h-[160px] [@media(min-height:780px)]:h-[200px] tsp-chart-compact shrink-0"
+                ref={snapshotChartRef}
+              />
+              <div className="w-pane flex-1 min-h-[140px] flex flex-col overflow-hidden">
                 <PaneHeader
                   title="本地时序快照日志 (data/consensus_snapshots.jsonl)"
                   badge={`共 ${altOverview?.snapshots?.length ?? 0} 条`}

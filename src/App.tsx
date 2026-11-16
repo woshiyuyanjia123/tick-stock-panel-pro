@@ -218,6 +218,10 @@ export default function App() {
   const [seatMenuOpen, setSeatMenuOpen] = useState(false);
   const [liveAlerts, setLiveAlerts] = useState<AlertTriggerEvent[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [compactMode, setCompactMode] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerHeight < 740 : false
+  );
+  const compactManualRef = useRef(false);
   const [apiLatencyMs, setApiLatencyMs] = useState<number | null>(null);
   const [commandStrip, setCommandStrip] = useState<GlobalCommandStripSummary | null>(null);
   const [showCommandStrip, setShowCommandStrip] = useState<boolean>(true);
@@ -348,6 +352,34 @@ export default function App() {
     const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('tsp-compact', compactMode);
+    }
+  }, [compactMode]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (!compactManualRef.current) {
+        setCompactMode(window.innerHeight < 740);
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const handleToggleCompact = useCallback(() => {
+    compactManualRef.current = true;
+    setCompactMode((v) => !v);
+  }, []);
+
+  const handleHorizontalWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollWidth > el.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      el.scrollLeft += e.deltaY;
+    }
   }, []);
 
   const handleToggleFullscreen = useCallback(() => {
@@ -665,20 +697,23 @@ export default function App() {
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#090c10] text-[#dfe6f0]">
       {/* Top 28px Wind Menu & Workspace Ribbon */}
-      <header className="h-[28px] shrink-0 bg-[#141923] border-b border-[#222832] flex items-center justify-between select-none z-30">
-        <div className="flex items-center h-full min-w-0 overflow-x-auto">
+      <header className="h-[28px] shrink-0 bg-[#141923] border-b border-[#222832] flex items-center justify-between select-none z-30 overflow-hidden">
+        <div
+          onWheel={handleHorizontalWheel}
+          className="flex items-center h-full flex-1 min-w-0 overflow-x-auto tsp-no-scrollbar"
+        >
           <div className="h-full px-2.5 bg-[#ff8800] text-[#090c10] font-bold text-[11px] flex items-center shrink-0 tracking-tight">
             {isPopout ? 'W·TSP 独立副屏' : 'W·TSP 终端'}
           </div>
 
-          <nav className="flex items-center h-full">
+          <nav className="flex items-center h-full shrink-0">
             {TOP_RIBBON_TABS.map((t) => {
               const isActive = t.tabs.includes(activeTab);
               return (
                 <button
                   key={t.keyLabel}
                   onClick={() => setActiveTab(t.primaryTab)}
-                  className={`h-full px-2.5 text-[11px] border-r border-[#222832] whitespace-nowrap flex items-center gap-1 transition-colors ${
+                  className={`h-full px-2.5 text-[11px] border-r border-[#222832] whitespace-nowrap shrink-0 flex items-center gap-1 transition-colors ${
                     isActive
                       ? 'bg-[#0e1117] text-[#ff9500] border-t-2 border-t-[#ff8800] font-semibold'
                       : t.isAlpha
@@ -694,12 +729,12 @@ export default function App() {
           </nav>
         </div>
 
-        {/* Right Controls: SSE Stream + Seat Switcher + Keyboard Sprite + AI Terminal + Fullscreen + Clock */}
+        {/* Right Controls: SSE Stream + Seat Switcher + Keyboard Sprite + AI Terminal + Density + CommandStrip + Popout + Fullscreen + Clock */}
         <div className="flex items-center h-full shrink-0 border-l border-[#222832] relative">
           {/* Stream / Poll Indicator */}
           <button
             onClick={() => setLiveEnabled((v) => !v)}
-            className="h-full px-2 bg-[#0e1117] hover:bg-[#181f2c] text-[10px] font-mono border-r border-[#222832] flex items-center gap-1 whitespace-nowrap"
+            className="h-full px-2 bg-[#0e1117] hover:bg-[#181f2c] text-[10px] font-mono border-r border-[#222832] flex items-center gap-1 whitespace-nowrap shrink-0"
             title={streamConnected ? 'SSE 实时推送已连接 (点击暂停/恢复)' : '15s REST 轮询兜底 (点击暂停/恢复)'}
           >
             <span
@@ -716,13 +751,13 @@ export default function App() {
           </button>
 
           {/* Active Tenant Seat & Equity Pill + Quick Seat Switcher */}
-          <div className="relative h-full">
+          <div className="relative h-full shrink-0">
             <button
               onClick={() => setSeatMenuOpen((v) => !v)}
-              className="h-full px-2 bg-[#111620] hover:bg-[#18202e] text-[10px] font-mono border-r border-[#222832] flex items-center gap-1.5 whitespace-nowrap"
+              className="h-full px-2 bg-[#111620] hover:bg-[#18202e] text-[10px] font-mono border-r border-[#222832] flex items-center gap-1.5 whitespace-nowrap shrink-0"
               title="点击切换机构席位或进入 OMS 实盘/SaaS"
             >
-              <span className="text-[#9aa5b5]">席位:</span>
+              <span className="text-[#9aa5b5] hidden 2xl:inline">席位:</span>
               <span className="text-[#e5b567] font-semibold">
                 {saasDiag?.currentUser?.displayName || '机构席位'}
               </span>
@@ -730,7 +765,7 @@ export default function App() {
                 <>
                   <span className="text-[#3b4558]">|</span>
                   <span className="text-[#dfe6f0] tabular-nums">
-                    净值 ¥{(paperSummary.totalEquity / 10000).toFixed(2)}万
+                    <span className="hidden 2xl:inline">净值 </span>¥{(paperSummary.totalEquity / 10000).toFixed(2)}万
                   </span>
                   <span
                     className={`tabular-nums ${
@@ -797,23 +832,35 @@ export default function App() {
               setSpriteOpen(true);
               setTimeout(() => spriteInputRef.current?.focus(), 0);
             }}
-            className="h-full px-2.5 bg-[#0e1117] hover:bg-[#181f2c] text-[11px] text-[#8b95a5] border-r border-[#222832] flex items-center gap-2 font-mono"
+            className="h-full px-2 bg-[#0e1117] hover:bg-[#181f2c] text-[11px] text-[#8b95a5] border-r border-[#222832] flex items-center gap-1.5 font-mono whitespace-nowrap shrink-0"
             title="键盘精灵: 直接按键输入代码/简称 (Ctrl+K)"
           >
             <span className="text-[#e5b567]">代码/简称</span>
-            <span className="text-[#5d6777]">键盘精灵</span>
+            <span className="text-[#5d6777] hidden 2xl:inline">键盘精灵</span>
           </button>
 
           <button
             onClick={() => setAiOpen(true)}
-            className="h-full px-2.5 bg-[#161c26] hover:bg-[#1e2736] text-[11px] text-[#4da3ff] font-medium border-r border-[#222832] whitespace-nowrap"
+            className="h-full px-2 bg-[#161c26] hover:bg-[#1e2736] text-[11px] text-[#4da3ff] font-medium border-r border-[#222832] whitespace-nowrap shrink-0"
           >
             AI研报终端
           </button>
 
           <button
+            onClick={handleToggleCompact}
+            className={`h-full px-2 text-[10px] font-mono border-r border-[#222832] whitespace-nowrap shrink-0 ${
+              compactMode
+                ? 'bg-[#241809] text-[#ff8800] hover:bg-[#2f200c]'
+                : 'bg-[#0e1117] text-[#9aa5b5] hover:bg-[#181f2c]'
+            }`}
+            title="切换界面密度 ([紧凑] 适配 1080p@150% DPI / 672px 矮屏; [标准] 适配常规高分屏)"
+          >
+            {compactMode ? '[紧凑]' : '[标准]'}
+          </button>
+
+          <button
             onClick={() => setShowCommandStrip((v) => !v)}
-            className={`h-full px-2 text-[10px] font-mono border-r border-[#222832] whitespace-nowrap ${
+            className={`h-full px-2 text-[10px] font-mono border-r border-[#222832] whitespace-nowrap shrink-0 ${
               showCommandStrip
                 ? 'bg-[#151c28] text-[#ff8800] hover:bg-[#1b2434]'
                 : 'bg-[#0e1117] text-[#7d8796] hover:bg-[#181f2c]'
@@ -835,7 +882,7 @@ export default function App() {
                 );
               }
             }}
-            className="h-full px-2 bg-[#111620] hover:bg-[#1b2434] text-[10px] font-mono text-[#e5b567] border-r border-[#222832] whitespace-nowrap"
+            className="h-full px-2 bg-[#111620] hover:bg-[#1b2434] text-[10px] font-mono text-[#e5b567] border-r border-[#222832] whitespace-nowrap shrink-0"
             title="将当前工作区拆出独立多屏副窗口 (?popout=1)"
           >
             [拆窗副屏]
@@ -843,13 +890,13 @@ export default function App() {
 
           <button
             onClick={handleToggleFullscreen}
-            className="h-full px-2 bg-[#0e1117] hover:bg-[#181f2c] text-[10px] font-mono text-[#9aa5b5] border-r border-[#222832] whitespace-nowrap"
+            className="h-full px-2 bg-[#0e1117] hover:bg-[#181f2c] text-[10px] font-mono text-[#9aa5b5] border-r border-[#222832] whitespace-nowrap shrink-0"
             title="切换终端全屏 (适合桌面端多屏展示)"
           >
             {isFullscreen ? '[退出全屏]' : '[全屏]'}
           </button>
 
-          <div className="h-full px-2.5 flex items-center gap-1.5 text-[11px] font-mono tabular-nums text-[#dfe6f0] bg-[#10141c] whitespace-nowrap">
+          <div className="h-full px-2 flex items-center gap-1.5 text-[11px] font-mono tabular-nums text-[#dfe6f0] bg-[#10141c] whitespace-nowrap shrink-0">
             <span className="text-[#7d8796] hidden xl:inline">
               {health?.tradingDate || '--'}
             </span>
@@ -860,7 +907,10 @@ export default function App() {
 
       {/* Compact 24px Global Alpha Command Strip */}
       {showCommandStrip && (
-        <div className="h-[24px] shrink-0 bg-[#0d1118] border-b border-[#222832] px-2 flex items-center justify-between gap-2 text-[11px] font-mono select-none overflow-x-auto z-20">
+        <div
+          onWheel={handleHorizontalWheel}
+          className="h-[24px] shrink-0 bg-[#0d1118] border-b border-[#222832] px-2 flex items-center justify-between gap-2 text-[11px] font-mono select-none overflow-x-auto tsp-no-scrollbar z-20"
+        >
           <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
@@ -1007,7 +1057,7 @@ export default function App() {
 
       {/* Bottom Fixed 24px 同花顺/Wind Live Status & Index Bar */}
       <footer className="h-[24px] shrink-0 bg-[#121720] border-t border-[#222832] px-2 flex items-center justify-between text-[11px] font-mono tabular-nums select-none z-30">
-        <div className="flex items-center gap-3 overflow-x-auto">
+        <div className="flex items-center gap-3 overflow-x-auto tsp-no-scrollbar">
           {(indices.length
             ? indices
             : [

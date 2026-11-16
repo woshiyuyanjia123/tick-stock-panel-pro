@@ -157,7 +157,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 
     res.json({
       ok: true,
-      version: 'v1.2.0-enterprise',
+      version: 'v1.2.1-enterprise',
       tradingDate: dates.latestDate,
       isMarketOpen: dates.isMarketOpen,
       serverTime: new Date().toISOString().replace('T', ' ').slice(0, 19),
@@ -635,7 +635,7 @@ app.post('/api/consensus/backtest', async (req: Request, res: Response) => {
   }
 });
 
-// ================= V6–V8 (v1.2.0-enterprise) 多租户SaaS · 机构OMS实盘交易柜台 · SQLite归档 · Webhook · SSE流 =================
+// ================= V6–V8 (v1.2.1-enterprise) 多租户SaaS · 机构OMS实盘交易柜台 · SQLite归档 · Webhook · SSE流 =================
 
 app.get('/api/saas/diagnostics', (req: Request, res: Response) => {
   try {
@@ -916,7 +916,7 @@ app.get('/api/stream/command-strip', async (_req: Request, res: Response) => {
   }
 });
 
-// ================= V7 (v1.2.0-enterprise) 多标的专属事实因子确定性买点 & 付鹏24h宏观FICC框架 =================
+// ================= V7 (v1.2.1-enterprise) 多标的专属事实因子确定性买点 & 付鹏24h宏观FICC框架 =================
 
 app.get('/api/fact-buypoint/overview', async (_req: Request, res: Response) => {
   try {

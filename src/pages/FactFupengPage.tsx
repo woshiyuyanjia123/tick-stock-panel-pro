@@ -1261,8 +1261,8 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
   return (
     <div className="h-full w-full flex flex-col bg-[#090c10] text-[#dfe6f0] overflow-hidden select-none">
       {/* Top 28px Wind Sub-Tab Header Ribbon */}
-      <div className="h-[28px] bg-[#161b24] border-b border-[#222832] flex items-center justify-between shrink-0">
-        <div className="flex items-center h-full overflow-x-auto">
+      <div className="h-[28px] bg-[#161b24] border-b border-[#222832] flex items-center justify-between shrink-0 overflow-hidden">
+        <div className="flex items-center h-full flex-1 min-w-0 overflow-x-auto tsp-no-scrollbar">
           {SUB_TABS.map((tab) => {
             const active = activeTab === tab.id;
             return (
@@ -1728,7 +1728,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
                 )}
 
                 {/* Dual #0d1015 ECharts Row */}
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-[1px] bg-[#222832] h-[220px] shrink-0">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-[1px] bg-[#222832] h-[168px] [@media(min-height:780px)]:h-[220px] tsp-chart-compact shrink-0">
                   <div className="bg-[#0d1015] relative">
                     {detailLoading && !assetDetail ? (
                       <div className="h-full flex items-center justify-center text-[11px] text-[#7d8796]">
@@ -2287,7 +2287,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
               </div>
 
               {/* 3-line Equity + AI Weight + Drawdown Chart */}
-              <div className="h-[260px] bg-[#0d1015] border-b border-[#222832] shrink-0">
+              <div className="h-[175px] [@media(min-height:780px)]:h-[245px] tsp-chart-compact bg-[#0d1015] border-b border-[#222832] shrink-0">
                 {bbLoading && !bbResult ? (
                   <div className="h-full flex items-center justify-center text-[11px] text-[#7d8796]">
                     正在运行付鹏动态杠铃组合实盘回测...
@@ -2798,7 +2798,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
           </div>
 
           {/* Two Charts Top Half */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-[1px] bg-[#222832] h-[250px] shrink-0">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-[1px] bg-[#222832] h-[175px] [@media(min-height:780px)]:h-[235px] tsp-chart-compact shrink-0">
             <div className="bg-[#0d1015]">
               <div ref={crossAssetBarChartRef} className="w-full h-full" />
             </div>
