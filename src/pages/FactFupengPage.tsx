@@ -260,6 +260,9 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
   const [bbResult, setBbResult] = useState<FupengBarbellBacktestResponse | null>(null);
 
   // Tab [03]: Scraper + Ingest Note
+  const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string>(() =>
+    new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  );
   const [scrapingNow, setScrapingNow] = useState(false);
   const [scrapeStatusMsg, setScrapeStatusMsg] = useState<string | null>(null);
   const [pillarFilter, setPillarFilter] = useState<'all' | FupengMacroPillar>('all');
@@ -278,50 +281,80 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
   const crossAssetBarChartRef = useRef<HTMLDivElement | null>(null);
   const labEquityChartRef = useRef<HTMLDivElement | null>(null);
 
-  const loadFactOverview = useCallback(async () => {
-    setFactLoading(true);
-    setFactError(null);
+  const loadFactOverview = useCallback(async (silent = false) => {
+    if (silent !== true) {
+      setFactLoading(true);
+      setFactError(null);
+    }
     try {
       const data = await api.getFactBuyPointOverview();
       setFactOverview(data);
+      setLastAutoSyncAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
       if (data.profiles?.length) {
+        let focusSym = '';
+        try {
+          const pending = window.localStorage.getItem('tsp_focus_symbol');
+          if (pending && data.profiles.some((p) => p.symbol === pending)) {
+            focusSym = pending;
+            window.localStorage.removeItem('tsp_focus_symbol');
+          }
+        } catch {
+          // ignore storage errors
+        }
         setSelectedSymbol((prev) =>
-          data.profiles.some((p) => p.symbol === prev) ? prev : data.profiles[0].symbol
+          focusSym || (data.profiles.some((p) => p.symbol === prev) ? prev : data.profiles[0].symbol)
         );
       }
     } catch (e: unknown) {
-      setFactError(e instanceof Error ? e.message : '加载多标的事实因子总表失败');
+      if (silent !== true) {
+        setFactError(e instanceof Error ? e.message : '加载多标的事实因子总表失败');
+      }
     } finally {
-      setFactLoading(false);
+      if (silent !== true) {
+        setFactLoading(false);
+      }
     }
   }, []);
 
-  const loadAssetDetail = useCallback(async (symbol: string) => {
+  const loadAssetDetail = useCallback(async (symbol: string, silent = false) => {
     if (!symbol) return;
-    setDetailLoading(true);
-    setDetailError(null);
-    setLabResult(null);
-    setLabError(null);
+    if (silent !== true) {
+      setDetailLoading(true);
+      setDetailError(null);
+      setLabResult(null);
+      setLabError(null);
+    }
     try {
       const data = await api.getAssetFactDetail(symbol, 180);
       setAssetDetail(data);
     } catch (e: unknown) {
-      setDetailError(e instanceof Error ? e.message : `加载 ${symbol} 复盘详情失败`);
+      if (silent !== true) {
+        setDetailError(e instanceof Error ? e.message : `加载 ${symbol} 复盘详情失败`);
+      }
     } finally {
-      setDetailLoading(false);
+      if (silent !== true) {
+        setDetailLoading(false);
+      }
     }
   }, []);
 
-  const loadFupengOverview = useCallback(async () => {
-    setFupengLoading(true);
-    setFupengError(null);
+  const loadFupengOverview = useCallback(async (silent = false) => {
+    if (silent !== true) {
+      setFupengLoading(true);
+      setFupengError(null);
+    }
     try {
       const data = await api.getFupengOverview();
       setFupengOverview(data);
+      setLastAutoSyncAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
     } catch (e: unknown) {
-      setFupengError(e instanceof Error ? e.message : '加载付鹏宏观FICC总览失败');
+      if (silent !== true) {
+        setFupengError(e instanceof Error ? e.message : '加载付鹏宏观FICC总览失败');
+      }
     } finally {
-      setFupengLoading(false);
+      if (silent !== true) {
+        setFupengLoading(false);
+      }
     }
   }, []);
 
@@ -348,6 +381,40 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
     loadFactOverview();
     loadFupengOverview();
   }, [loadFactOverview, loadFupengOverview]);
+
+  useEffect(() => {
+    const onJobTick = (evt: Event) => {
+      const detail = (evt as CustomEvent<{ job?: string }>).detail;
+      const job = detail?.job;
+      if (job === 'fupeng_24h_watch') {
+        void loadFupengOverview(true);
+      } else if (job === 'fact_buypoint_watch' || job === 'alert_and_cpo_watch') {
+        void loadFactOverview(true);
+        if (selectedSymbol) void loadAssetDetail(selectedSymbol, true);
+      }
+    };
+    window.addEventListener('tsp:job-tick', onJobTick);
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      void loadFactOverview(true);
+      void loadFupengOverview(true);
+    }, 45_000);
+    return () => {
+      window.removeEventListener('tsp:job-tick', onJobTick);
+      clearInterval(timer);
+    };
+  }, [loadFactOverview, loadFupengOverview, loadAssetDetail, selectedSymbol]);
+
+  useEffect(() => {
+    const onFocusSymbol = (evt: Event) => {
+      const sym = String((evt as CustomEvent<string>).detail || '').trim();
+      if (sym && factOverview?.profiles?.some((p) => p.symbol === sym)) {
+        setSelectedSymbol(sym);
+      }
+    };
+    window.addEventListener('tsp:focus-symbol', onFocusSymbol);
+    return () => window.removeEventListener('tsp:focus-symbol', onFocusSymbol);
+  }, [factOverview]);
 
   useEffect(() => {
     if (selectedSymbol) {
@@ -1217,6 +1284,13 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
               付鹏库: {fupengOverview.watcherDaemonStatus?.totalStoredIntelCount ?? fupengOverview.intelFeed.length} 条
             </span>
           )}
+          <span
+            className="hidden xl:inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#0e1117] border border-[#222832] text-[#00c853] font-mono tabular-nums"
+            title="每45秒及SSE后台任务完成时自动静默刷新"
+          >
+            <span className="w-1.5 h-1.5 bg-[#00c853]" />
+            自动抓取守护 · 同步于 {lastAutoSyncAt}
+          </span>
           {onNavigate && (
             <button
               type="button"
@@ -1341,7 +1415,7 @@ export default function FactFupengPage({ onSelectStock, onNavigate }: FactFupeng
               <span>事实因子总表加载异常: {factError}</span>
               <button
                 type="button"
-                onClick={loadFactOverview}
+                onClick={() => void loadFactOverview(false)}
                 className="px-2 py-0.5 border border-[#ff3535] text-[#ff3535]"
               >
                 重试

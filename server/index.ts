@@ -69,6 +69,7 @@ import {
   resetPaperPortfolio,
 } from './services/paperTradingService';
 import {
+  getGlobalCommandStripSummary,
   getStreamDiagnostics,
   handleSseConnection,
   startRealtimeDaemon,
@@ -846,10 +847,19 @@ app.post('/api/webhooks/:id/test', async (req: Request, res: Response) => {
   }
 });
 
-// Real-Time SSE Event Stream
+// Real-Time SSE Event Stream & Global Alpha Command Strip
 app.get('/api/stream/events', (req: Request, res: Response) => {
   const user = resolveTenantUser(req);
   handleSseConnection(req, res, user.id);
+});
+
+app.get('/api/stream/command-strip', async (_req: Request, res: Response) => {
+  try {
+    const summary = await getGlobalCommandStripSummary();
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to compute command strip' });
+  }
 });
 
 // ================= V7 (v1.1.0-enterprise) 多标的专属事实因子确定性买点 & 付鹏24h宏观FICC框架 =================

@@ -5,6 +5,7 @@ import StockDetailModal from './components/StockDetailModal';
 import AiCyberAgentDrawer from './components/AiCyberAgentDrawer';
 import type {
   AlertTriggerEvent,
+  GlobalCommandStripSummary,
   HealthResponse,
   IndexQuote,
   NavTabId,
@@ -104,6 +105,37 @@ const TOP_RIBBON_TABS: TopRibbonTab[] = [
   },
 ];
 
+interface FuturesSpriteItem {
+  symbol: string;
+  name: string;
+  targetTab: NavTabId;
+  note: string;
+}
+
+const FUTURES_SPRITE_DICT: FuturesSpriteItem[] = [
+  { symbol: 'AU0', name: '沪金主力', targetTab: 'fact-fupeng', note: '确定买点 / 付鹏黄金锚' },
+  { symbol: 'AG0', name: '沪银主力', targetTab: 'fact-fupeng', note: '确定买点 / 金银比空头腿' },
+  { symbol: 'SC0', name: '上海原油', targetTab: 'fact-fupeng', note: '确定买点 / 油金比锚' },
+  { symbol: 'EC0', name: '欧线集运', targetTab: 'fact-fupeng', note: '确定买点 / 航运Back溢价' },
+  { symbol: 'MA0', name: '甲醇主力', targetTab: 'fact-fupeng', note: '确定买点 / 港口去库' },
+  { symbol: 'CU0', name: '沪铜主力', targetTab: 'panda-pm', note: '铜金比需求锚 / F10 PM' },
+  { symbol: 'LC0', name: '碳酸锂主力', targetTab: 'consensus-cpo', note: '期限结构 / 储能锚' },
+  { symbol: 'TL0', name: '30年国债期指', targetTab: 'fact-fupeng', note: '付鹏哑铃左端利率锚' },
+  { symbol: 'T0', name: '10年国债期指', targetTab: 'fact-fupeng', note: '付鹏哑铃左端国债' },
+  { symbol: 'IC0', name: '中证500期指', targetTab: 'consensus-cpo', note: 'CPO五节点/FICC对冲' },
+  { symbol: 'IM0', name: '中证1000期指', targetTab: 'consensus-cpo', note: '小盘拥挤波动对冲' },
+  { symbol: 'IF0', name: '沪深300期指', targetTab: 'panda-pm', note: '股指主力跨市场映射' },
+  { symbol: 'IH0', name: '上证50期指', targetTab: 'panda-pm', note: '权重红利期指对冲' },
+  { symbol: 'RB0', name: '螺纹钢主力', targetTab: 'fact-fupeng', note: '付鹏地产黑色去杠杆' },
+  { symbol: 'FG0', name: '玻璃主力', targetTab: 'fact-fupeng', note: '付鹏地产过剩对冲' },
+  { symbol: 'I0', name: '铁矿石主力', targetTab: 'fact-fupeng', note: '黑色产业链估值锚' },
+  { symbol: 'AL0', name: '沪铝主力', targetTab: 'panda-pm', note: '能源电解铝成本映射' },
+  { symbol: 'SI0', name: '工业硅主力', targetTab: 'panda-pm', note: '多晶/光伏供需期限' },
+  { symbol: 'M0', name: '豆粕主力', targetTab: 'panda-pm', note: '农产品气象库存PM' },
+  { symbol: 'P0', name: '棕榈油主力', targetTab: 'panda-pm', note: '东南亚生柴与厄尔尼诺' },
+  { symbol: 'FU0', name: '燃料油主力', targetTab: 'panda-pm', note: '高胜率中东航运能化' },
+];
+
 class PageErrorBoundary extends React.Component<
   { children: React.ReactNode; resetKey: string },
   { hasError: boolean; errorMsg: string }
@@ -167,6 +199,11 @@ export default function App() {
   const [liveAlerts, setLiveAlerts] = useState<AlertTriggerEvent[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [apiLatencyMs, setApiLatencyMs] = useState<number | null>(null);
+  const [commandStrip, setCommandStrip] = useState<GlobalCommandStripSummary | null>(null);
+  const [showCommandStrip, setShowCommandStrip] = useState<boolean>(true);
+  const [lastSyncClock, setLastSyncClock] = useState<string>(() =>
+    new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  );
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [tenantNonce, setTenantNonce] = useState(0);
 
@@ -183,12 +220,17 @@ export default function App() {
 
   const fetchSaasAndPaper = useCallback(async () => {
     try {
-      const [diag, paper] = await Promise.all([
+      const [diag, paper, strip] = await Promise.all([
         api.getSaasDiagnostics().catch(() => null),
         api.getPaperDesk().catch(() => null),
+        api.getCommandStrip().catch(() => null),
       ]);
       if (diag) {
         setSaasDiag(diag);
+      }
+      if (strip) {
+        setCommandStrip(strip);
+        setLastSyncClock(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
       }
       if (paper?.activePortfolio) {
         setPaperSummary({
@@ -254,6 +296,17 @@ export default function App() {
         if (pulse.paperSummary) {
           setPaperSummary(pulse.paperSummary);
         }
+        setLastSyncClock(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
+      },
+      onJobTick: (tick) => {
+        if (tick.commandStrip) {
+          setCommandStrip(tick.commandStrip);
+        }
+        setLastSyncClock(
+          tick.timestamp?.length >= 19
+            ? tick.timestamp.slice(11, 19)
+            : new Date().toLocaleTimeString('zh-CN', { hour12: false })
+        );
       },
       onAlert: (evt) => {
         setLiveAlerts((prev) => [evt, ...prev].slice(0, 4));
@@ -318,16 +371,26 @@ export default function App() {
     );
   }, [spriteQuery]);
 
+  const matchedFutures = useMemo(() => {
+    const q = spriteQuery.trim().toLowerCase();
+    if (!q) return [];
+    return FUTURES_SPRITE_DICT.filter(
+      (f) => f.symbol.toLowerCase().includes(q) || f.name.toLowerCase().includes(q)
+    ).slice(0, 6);
+  }, [spriteQuery]);
+
   type SpriteEntry =
     | { kind: 'stock'; item: StockSearchItem }
+    | { kind: 'futures'; item: FuturesSpriteItem }
     | { kind: 'tab'; item: TopRibbonTab };
 
   const spriteEntries: SpriteEntry[] = useMemo(() => {
     const list: SpriteEntry[] = [];
+    for (const f of matchedFutures) list.push({ kind: 'futures', item: f });
     for (const s of spriteStocks) list.push({ kind: 'stock', item: s });
     for (const t of matchedShortcuts) list.push({ kind: 'tab', item: t });
     return list;
-  }, [spriteStocks, matchedShortcuts]);
+  }, [matchedFutures, spriteStocks, matchedShortcuts]);
 
   useEffect(() => {
     setSpriteIndex(0);
@@ -354,6 +417,14 @@ export default function App() {
     if (!entry) return;
     if (entry.kind === 'stock') {
       setSelectedStock({ code: entry.item.code, name: entry.item.name });
+    } else if (entry.kind === 'futures') {
+      try {
+        window.localStorage.setItem('tsp_focus_symbol', entry.item.symbol);
+      } catch {
+        // ignore storage access issues
+      }
+      setActiveTab(entry.item.targetTab);
+      window.dispatchEvent(new CustomEvent('tsp:focus-symbol', { detail: entry.item.symbol }));
     } else {
       setActiveTab(entry.item.primaryTab);
     }
@@ -721,6 +792,18 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setShowCommandStrip((v) => !v)}
+            className={`h-full px-2 text-[10px] font-mono border-r border-[#222832] whitespace-nowrap ${
+              showCommandStrip
+                ? 'bg-[#151c28] text-[#ff8800] hover:bg-[#1b2434]'
+                : 'bg-[#0e1117] text-[#7d8796] hover:bg-[#181f2c]'
+            }`}
+            title="显示/隐藏顶部跨维作战联立条 (付鹏FICC / CPO五节点 / 4/4买点 / 后台抓取状态)"
+          >
+            [作战条]
+          </button>
+
+          <button
             onClick={handleToggleFullscreen}
             className="h-full px-2 bg-[#0e1117] hover:bg-[#181f2c] text-[10px] font-mono text-[#9aa5b5] border-r border-[#222832] whitespace-nowrap"
             title="切换终端全屏 (适合桌面端多屏展示)"
@@ -736,6 +819,117 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Compact 24px Global Alpha Command Strip */}
+      {showCommandStrip && (
+        <div className="h-[24px] shrink-0 bg-[#0d1118] border-b border-[#222832] px-2 flex items-center justify-between gap-2 text-[11px] font-mono select-none overflow-x-auto z-20">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={() => setActiveTab('fact-fupeng')}
+              className="flex items-center gap-1.5 hover:bg-[#18202e] px-1.5 h-[20px] whitespace-nowrap shrink-0"
+              title="点击直达 确定买点 & 付鹏24h宏观FICC工作台"
+            >
+              <span className="w-[2px] h-2.5 bg-[#ff8800]" />
+              <span className="text-[#7d8796]">付鹏FICC:</span>
+              <span className="text-[#f0b90b] max-w-[260px] truncate font-sans">
+                {commandStrip?.fupengRegime || '正在同步FICC框架...'}
+              </span>
+              <span className="text-[#5d6777] tabular-nums">
+                ({commandStrip?.fupengIntelCount ?? '--'}条)
+              </span>
+            </button>
+
+            <span className="text-[#222832]">|</span>
+
+            <div className="flex items-center gap-1 whitespace-nowrap shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveTab('fact-fupeng')}
+                className="text-[#7d8796] hover:text-[#dfe6f0]"
+              >
+                4/4确定买点:
+              </button>
+              {commandStrip && commandStrip.fact4of4Symbols.length > 0 ? (
+                commandStrip.fact4of4Symbols.map((item) => (
+                  <button
+                    key={item.symbol}
+                    type="button"
+                    onClick={() => {
+                      try {
+                        window.localStorage.setItem('tsp_focus_symbol', item.symbol);
+                      } catch {
+                        // ignore
+                      }
+                      setActiveTab('fact-fupeng');
+                      window.dispatchEvent(
+                        new CustomEvent('tsp:focus-symbol', { detail: item.symbol })
+                      );
+                    }}
+                    className="px-1.5 h-[18px] bg-[#2a1706] border border-[#ff8800] text-[#ff8800] hover:bg-[#3a2009] text-[10px] font-semibold"
+                  >
+                    {item.symbol} {item.name}
+                  </button>
+                ))
+              ) : commandStrip && commandStrip.fact3of4Symbols.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('fact-fupeng')}
+                  className="px-1.5 h-[18px] bg-[#211c08] border border-[#f0b90b] text-[#f0b90b] text-[10px]"
+                >
+                  3/4临近: {commandStrip.fact3of4Symbols.map((s) => s.symbol).join('/')}
+                </button>
+              ) : (
+                <span className="text-[#6d7787] text-[10px]">巡检扫描中</span>
+              )}
+            </div>
+
+            <span className="text-[#222832]">|</span>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('consensus-cpo')}
+              className="flex items-center gap-1.5 hover:bg-[#18202e] px-1.5 h-[20px] whitespace-nowrap shrink-0"
+              title="点击直达 F12 CPO五节点贝叶斯传导"
+            >
+              <span className="text-[#7d8796]">CPO五节点:</span>
+              <span className="text-[#4da3ff] tabular-nums">
+                门控 {commandStrip?.cpoGatesPassed ?? 0}/{commandStrip?.cpoGatesTotal ?? 4}
+              </span>
+              <span className="text-[#cfd8e3] font-sans max-w-[200px] truncate">
+                {commandStrip?.cpoRegime || '--'}
+              </span>
+              {commandStrip?.tmtCrowdingPct !== null &&
+                commandStrip?.tmtCrowdingPct !== undefined && (
+                  <span
+                    className={`tabular-nums text-[10px] ${
+                      commandStrip.tmtCrowdingPct >= 38 ? 'text-[#ff3535]' : 'text-[#8b95a5]'
+                    }`}
+                  >
+                    (TMT {commandStrip.tmtCrowdingPct.toFixed(1)}%)
+                  </span>
+                )}
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('saas-desk')}
+            className="flex items-center gap-1.5 px-1.5 h-[20px] hover:bg-[#18202e] whitespace-nowrap shrink-0 text-[10px] tabular-nums"
+            title="点击查看 5 路后台 24h 自动抓取任务与 SQLite WAL 诊断"
+          >
+            <span
+              className={`w-1.5 h-1.5 ${
+                streamConnected ? 'bg-[#00c853]' : 'bg-[#f0b90b]'
+              }`}
+            />
+            <span className="text-[#00c853]">
+              自动抓取 {commandStrip?.activeJobsOk ?? 0}/{commandStrip?.totalJobs ?? 5} 守护
+            </span>
+            <span className="text-[#6d7787]">· 同步 {lastSyncClock}</span>
+          </button>
+        </div>
+      )}
 
       {/* Main Middle Area: 44px Rail + Edge-to-Edge Workspace */}
       <div className="flex-1 min-h-0 flex">
@@ -898,6 +1092,31 @@ export default function App() {
                           </span>
                         )}
                       </div>
+                    </button>
+                  );
+                }
+                if (entry.kind === 'futures') {
+                  return (
+                    <button
+                      key={`f-${entry.item.symbol}`}
+                      onMouseEnter={() => setSpriteIndex(idx)}
+                      onClick={() => executeSpriteEntry(entry)}
+                      className={`w-full h-[26px] px-2 flex items-center justify-between text-xs font-mono ${
+                        selected ? 'bg-[#1f293b]' : 'hover:bg-[#18202e]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="px-1 bg-[#241809] border border-[#ff8800] text-[#ff8800] text-[10px]">
+                          期货
+                        </span>
+                        <span className="text-[#e5b567]">{entry.item.symbol}</span>
+                        <span className="text-[#e8edf5] font-sans truncate">
+                          {entry.item.name}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-[#8b95a5] font-sans shrink-0">
+                        {entry.item.note}
+                      </span>
                     </button>
                   );
                 }

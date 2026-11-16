@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import type {
   AlertTriggerEvent,
   CpoTransmissionOverviewResponse,
+  GlobalCommandStripSummary,
   IndexQuote,
   RealtimePulsePayload,
   SaasSystemDiagnostics,
@@ -11,6 +12,7 @@ import type {
 import {
   dbAppendAlertEvent,
   dbGetAlerts,
+  dbGetFupengIntelCount,
   dbInsertConsensusSnapshot,
   getDb,
 } from '../db/sqliteDb';
@@ -52,23 +54,32 @@ let pulseTimer: ReturnType<typeof setInterval> | null = null;
 let alertWatchTimer: ReturnType<typeof setInterval> | null = null;
 let consensusTimer: ReturnType<typeof setInterval> | null = null;
 let fupengTimer: ReturnType<typeof setInterval> | null = null;
+let factWatchTimer: ReturnType<typeof setInterval> | null = null;
 let pulseWarmupTimer: ReturnType<typeof setTimeout> | null = null;
 let alertWarmupTimer: ReturnType<typeof setTimeout> | null = null;
 let consensusWarmupTimer: ReturnType<typeof setTimeout> | null = null;
 let fupengWarmupTimer: ReturnType<typeof setTimeout> | null = null;
+let factWatchWarmupTimer: ReturnType<typeof setTimeout> | null = null;
 
 let pulseInFlight = false;
 let alertWatchInFlight = false;
 let consensusInFlight = false;
 let fupengInFlight = false;
+let factWatchInFlight = false;
 
 let latestBasePulse: RealtimePulsePayload | null = null;
 let lastCpoState: CpoStateSnapshot | null = null;
+let fact4of4Hydrated = false;
+const lastFact4of4Set = new Set<string>();
 const knownAlertIds = new Set<string>();
 let alertIdsHydrated = false;
 
 const jobs: Record<
-  'market_pulse' | 'alert_and_cpo_watch' | 'consensus_auto_snapshot' | 'fupeng_24h_watch',
+  | 'market_pulse'
+  | 'alert_and_cpo_watch'
+  | 'fact_buypoint_watch'
+  | 'consensus_auto_snapshot'
+  | 'fupeng_24h_watch',
   StreamJobStat
 > = {
   market_pulse: {
@@ -87,6 +98,14 @@ const jobs: Record<
     status: 'idle',
     lastDetail: '等待首次风控与CPO门控巡检',
   },
+  fact_buypoint_watch: {
+    name: 'fact_buypoint_watch',
+    intervalSec: 60,
+    lastRunAt: null,
+    runCount: 0,
+    status: 'idle',
+    lastDetail: '每60秒重算18大核心标的4/4确定性买点状态',
+  },
   consensus_auto_snapshot: {
     name: 'consensus_auto_snapshot',
     intervalSec: 900,
@@ -104,6 +123,31 @@ const jobs: Record<
     lastDetail: '每10分钟全网抓取付鹏24h最新动态并映射FICC标的',
   },
 };
+
+const commandStripState: GlobalCommandStripSummary = {
+  updatedAt: '',
+  fupengRegime: 'FICC哑铃框架待同步',
+  fupengIntelCount: 0,
+  fupengLastScrapedAt: null,
+  cpoRegime: 'CPO五节点待巡检',
+  cpoGatesPassed: 0,
+  cpoGatesTotal: 4,
+  tmtCrowdingPct: null,
+  fact4of4Symbols: [],
+  fact3of4Symbols: [],
+  activeJobsOk: 0,
+  totalJobs: 5,
+};
+
+function snapshotCommandStrip(): GlobalCommandStripSummary {
+  const jobValues = Object.values(jobs);
+  return {
+    ...commandStripState,
+    updatedAt: nowBjStr(),
+    activeJobsOk: jobValues.filter((j) => j.status === 'ok').length,
+    totalJobs: jobValues.length,
+  };
+}
 
 function nowBjStr(): string {
   const bj = getBeijingTimeInfo();
@@ -223,6 +267,7 @@ export async function runMarketPulseJob(): Promise<void> {
         runCount: jobs.market_pulse.runCount,
         status: 'ok',
         detail: jobs.market_pulse.lastDetail,
+        commandStrip: snapshotCommandStrip(),
       });
     }
   } catch (err: any) {
@@ -352,6 +397,10 @@ export async function runAlertAndCpoWatchJob(): Promise<void> {
     try {
       const overview = await getCpoTransmissionOverview();
       cpoRegimeText = `${overview.regime} (P=${overview.bayesianPosteriorProb}%)`;
+      commandStripState.cpoRegime = overview.regime;
+      commandStripState.cpoGatesPassed = overview.gates.filter((g) => g.passed).length;
+      commandStripState.cpoGatesTotal = overview.gates.length;
+      commandStripState.tmtCrowdingPct = overview.marketContext.tmtTurnoverSharePct ?? null;
       const currentState = buildCpoStateKey(overview);
 
       if (
@@ -417,6 +466,7 @@ export async function runAlertAndCpoWatchJob(): Promise<void> {
         runCount: jobs.alert_and_cpo_watch.runCount,
         status: 'ok',
         detail: jobs.alert_and_cpo_watch.lastDetail,
+        commandStrip: snapshotCommandStrip(),
       });
     }
   } catch (err: any) {
@@ -450,6 +500,7 @@ export async function runConsensusAutoSnapshotJob(): Promise<void> {
         runCount: jobs.consensus_auto_snapshot.runCount,
         status: 'ok',
         detail: jobs.consensus_auto_snapshot.lastDetail,
+        commandStrip: snapshotCommandStrip(),
       });
     }
   } catch (err: any) {
@@ -469,13 +520,22 @@ export async function runFupeng24hWatchJob(): Promise<void> {
   hydrateKnownAlertIds();
 
   try {
-    const { scrapeFupengLatestIntel } = await import('./fupengMacroService');
+    const { scrapeFupengLatestIntel, getFupengFrameworkOverview } = await import(
+      './fupengMacroService'
+    );
     const result = await scrapeFupengLatestIntel();
+    const fpOverview = await getFupengFrameworkOverview().catch(() => null);
 
     jobs.fupeng_24h_watch.lastRunAt = nowBjStr();
     jobs.fupeng_24h_watch.runCount += 1;
     jobs.fupeng_24h_watch.status = 'ok';
     jobs.fupeng_24h_watch.lastDetail = `全网抓取完成: 新增 ${result.newlyAdded} 条 | SQLite总库 ${result.totalCount} 条`;
+
+    commandStripState.fupengIntelCount = result.totalCount;
+    commandStripState.fupengLastScrapedAt = jobs.fupeng_24h_watch.lastRunAt;
+    if (fpOverview?.macroRegimeHeadline) {
+      commandStripState.fupengRegime = fpOverview.macroRegimeHeadline;
+    }
 
     if (result.newlyAdded > 0 && Array.isArray(result.newItems) && result.newItems.length > 0) {
       const topItem = result.newItems[0];
@@ -520,6 +580,7 @@ export async function runFupeng24hWatchJob(): Promise<void> {
         runCount: jobs.fupeng_24h_watch.runCount,
         status: 'ok',
         detail: jobs.fupeng_24h_watch.lastDetail,
+        commandStrip: snapshotCommandStrip(),
       });
     }
   } catch (err: any) {
@@ -529,6 +590,87 @@ export async function runFupeng24hWatchJob(): Promise<void> {
     jobs.fupeng_24h_watch.lastDetail = err?.message || 'fupeng_24h_watch failed';
   } finally {
     fupengInFlight = false;
+  }
+}
+
+export async function runFactBuyPointWatchJob(): Promise<void> {
+  if (factWatchInFlight) return;
+  factWatchInFlight = true;
+  jobs.fact_buypoint_watch.status = 'running';
+  hydrateKnownAlertIds();
+
+  try {
+    const { getFactBuyPointOverview } = await import('./factBuyPointService');
+    const ov = await getFactBuyPointOverview();
+
+    const list4 = ov.profiles
+      .filter((p) => p.passedConditionsCount >= 4)
+      .map((p) => ({ symbol: p.symbol, name: p.name }));
+    const list3 = ov.profiles
+      .filter((p) => p.passedConditionsCount === 3)
+      .map((p) => ({ symbol: p.symbol, name: p.name }));
+
+    commandStripState.fact4of4Symbols = list4;
+    commandStripState.fact3of4Symbols = list3;
+
+    const currentSet = new Set(list4.map((x) => x.symbol));
+    if (fact4of4Hydrated) {
+      const bj = getBeijingTimeInfo();
+      for (const item of list4) {
+        if (!lastFact4of4Set.has(item.symbol)) {
+          const prof = ov.profiles.find((p) => p.symbol === item.symbol);
+          const evId = `fact4-${item.symbol}-${bj.dateStr.replace(/-/g, '')}`;
+          if (!knownAlertIds.has(evId)) {
+            const ev: AlertTriggerEvent = {
+              id: evId,
+              time: nowBjStr(),
+              ruleId: 'sys-fact-buypoint-4of4',
+              ruleName: '4/4确定买点新触发',
+              code: item.symbol,
+              name: item.name,
+              message: `${item.symbol} ${item.name} 晋级4/4确定性买点 · 历史确定胜率 ${prof?.deterministicWinRatePct ?? 0}% · 建议切入 ${prof?.suggestedEntryPrice ?? '--'}`,
+              level: 'critical',
+            };
+            knownAlertIds.add(evId);
+            dbAppendAlertEvent(ev, 'u_desk_admin');
+            emitServerEvent('alert', ev);
+            await dispatchAlertToWebhooks('u_desk_admin', {
+              eventType: 'pm_shock',
+              title: `[TSP Pro 4/4确定买点] ${item.symbol} ${item.name}`,
+              message: ev.message,
+              symbol: `${item.symbol} ${item.name}`,
+              level: 'critical',
+            }).catch(() => undefined);
+          }
+        }
+      }
+    }
+    lastFact4of4Set.clear();
+    for (const sym of currentSet) lastFact4of4Set.add(sym);
+    fact4of4Hydrated = true;
+
+    jobs.fact_buypoint_watch.lastRunAt = nowBjStr();
+    jobs.fact_buypoint_watch.runCount += 1;
+    jobs.fact_buypoint_watch.status = 'ok';
+    jobs.fact_buypoint_watch.lastDetail = `18标的审计完成 · 4/4买点 ${list4.length} 只 (${list4.map((x) => x.symbol).join('/') || '无'}) | 3/4临近 ${list3.length} 只`;
+
+    if (clients.size > 0) {
+      emitServerEvent('job_tick', {
+        job: 'fact_buypoint_watch',
+        timestamp: jobs.fact_buypoint_watch.lastRunAt,
+        runCount: jobs.fact_buypoint_watch.runCount,
+        status: 'ok',
+        detail: jobs.fact_buypoint_watch.lastDetail,
+        commandStrip: snapshotCommandStrip(),
+      });
+    }
+  } catch (err: any) {
+    jobs.fact_buypoint_watch.lastRunAt = nowBjStr();
+    jobs.fact_buypoint_watch.runCount += 1;
+    jobs.fact_buypoint_watch.status = 'error';
+    jobs.fact_buypoint_watch.lastDetail = err?.message || 'fact_buypoint_watch failed';
+  } finally {
+    factWatchInFlight = false;
   }
 }
 
@@ -664,6 +806,16 @@ export function startRealtimeDaemon(): void {
     void runFupeng24hWatchJob();
   }, 600_000);
   fupengTimer.unref();
+
+  factWatchWarmupTimer = setTimeout(() => {
+    void runFactBuyPointWatchJob();
+  }, 10_000);
+  factWatchWarmupTimer.unref();
+
+  factWatchTimer = setInterval(() => {
+    void runFactBuyPointWatchJob();
+  }, 60_000);
+  factWatchTimer.unref();
 }
 
 export function stopRealtimeDaemon(): void {
@@ -671,18 +823,22 @@ export function stopRealtimeDaemon(): void {
   if (alertWatchTimer) clearInterval(alertWatchTimer);
   if (consensusTimer) clearInterval(consensusTimer);
   if (fupengTimer) clearInterval(fupengTimer);
+  if (factWatchTimer) clearInterval(factWatchTimer);
   if (pulseWarmupTimer) clearTimeout(pulseWarmupTimer);
   if (alertWarmupTimer) clearTimeout(alertWarmupTimer);
   if (consensusWarmupTimer) clearTimeout(consensusWarmupTimer);
   if (fupengWarmupTimer) clearTimeout(fupengWarmupTimer);
+  if (factWatchWarmupTimer) clearTimeout(factWatchWarmupTimer);
   pulseTimer = null;
   alertWatchTimer = null;
   consensusTimer = null;
   fupengTimer = null;
+  factWatchTimer = null;
   pulseWarmupTimer = null;
   alertWarmupTimer = null;
   consensusWarmupTimer = null;
   fupengWarmupTimer = null;
+  factWatchWarmupTimer = null;
   daemonStarted = false;
 
   for (const client of Array.from(clients.values())) {
@@ -718,8 +874,67 @@ export function getStreamDiagnostics(): SaasSystemDiagnostics['stream'] {
     jobs: [
       { ...jobs.market_pulse },
       { ...jobs.alert_and_cpo_watch },
-      { ...jobs.consensus_auto_snapshot },
+      { ...jobs.fact_buypoint_watch },
       { ...jobs.fupeng_24h_watch },
+      { ...jobs.consensus_auto_snapshot },
     ],
   };
+}
+
+export async function getGlobalCommandStripSummary(): Promise<GlobalCommandStripSummary> {
+  try {
+    commandStripState.fupengIntelCount = Math.max(
+      commandStripState.fupengIntelCount,
+      dbGetFupengIntelCount()
+    );
+  } catch {
+    // ignore if db not ready
+  }
+
+  const jobsNeedCpo = commandStripState.cpoRegime === 'CPO五节点待巡检';
+  const jobsNeedFact =
+    commandStripState.fact4of4Symbols.length === 0 &&
+    commandStripState.fact3of4Symbols.length === 0 &&
+    jobs.fact_buypoint_watch.runCount === 0;
+  const jobsNeedFupeng = commandStripState.fupengRegime === 'FICC哑铃框架待同步';
+
+  if (jobsNeedCpo || jobsNeedFact || jobsNeedFupeng) {
+    await Promise.all([
+      jobsNeedCpo
+        ? getCpoTransmissionOverview()
+            .then((ov) => {
+              commandStripState.cpoRegime = ov.regime;
+              commandStripState.cpoGatesPassed = ov.gates.filter((g) => g.passed).length;
+              commandStripState.cpoGatesTotal = ov.gates.length;
+              commandStripState.tmtCrowdingPct = ov.marketContext.tmtTurnoverSharePct ?? null;
+            })
+            .catch(() => undefined)
+        : Promise.resolve(),
+      jobsNeedFact
+        ? import('./factBuyPointService')
+            .then((m) => m.getFactBuyPointOverview())
+            .then((ov) => {
+              commandStripState.fact4of4Symbols = ov.profiles
+                .filter((p) => p.passedConditionsCount >= 4)
+                .map((p) => ({ symbol: p.symbol, name: p.name }));
+              commandStripState.fact3of4Symbols = ov.profiles
+                .filter((p) => p.passedConditionsCount === 3)
+                .map((p) => ({ symbol: p.symbol, name: p.name }));
+            })
+            .catch(() => undefined)
+        : Promise.resolve(),
+      jobsNeedFupeng
+        ? import('./fupengMacroService')
+            .then((m) => m.getFupengFrameworkOverview())
+            .then((fp) => {
+              if (fp.macroRegimeHeadline) commandStripState.fupengRegime = fp.macroRegimeHeadline;
+              commandStripState.fupengIntelCount = fp.watcherDaemonStatus.totalStoredIntelCount;
+              commandStripState.fupengLastScrapedAt = fp.watcherDaemonStatus.lastScrapedAt || null;
+            })
+            .catch(() => undefined)
+        : Promise.resolve(),
+    ]);
+  }
+
+  return snapshotCommandStrip();
 }

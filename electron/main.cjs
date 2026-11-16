@@ -52,6 +52,27 @@ function getWritableDataDir() {
     fs.mkdirSync(d, { recursive: true });
     return d;
   }
+  if (process.env.TSP_DATA_DIR) {
+    const custom = path.resolve(process.env.TSP_DATA_DIR);
+    fs.mkdirSync(custom, { recursive: true });
+    return custom;
+  }
+  // When launched from local project release/win-unpacked (4 levels up) or `electron .` (APP_ROOT/data),
+  // reuse workspace data/ if writable so the flagship SQLite database stays unified.
+  const candidates = [
+    path.resolve(APP_ROOT, 'data'),
+    path.resolve(APP_ROOT, '..', '..', '..', '..', 'data'),
+  ];
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, 'tsp_enterprise.sqlite'))) {
+        fs.accessSync(dir, fs.constants.W_OK);
+        return dir;
+      }
+    } catch {
+      // ignore non-writable candidate
+    }
+  }
   const d = path.join(app.getPath('userData'), 'data');
   fs.mkdirSync(d, { recursive: true });
   return d;
@@ -311,9 +332,14 @@ function buildAppMenu() {
 function setupTray() {
   if (isSmokeTest || tray) return;
   try {
-    let img = nativeImage.createFromPath(
-      fs.existsSync(TRAY_ICON_PATH) ? TRAY_ICON_PATH : ICON_PATH
-    );
+    const chosenPath = isWin
+      ? fs.existsSync(ICON_PATH)
+        ? ICON_PATH
+        : TRAY_ICON_PATH
+      : fs.existsSync(TRAY_ICON_PATH)
+      ? TRAY_ICON_PATH
+      : ICON_PATH;
+    let img = nativeImage.createFromPath(chosenPath);
     if (isMac) {
       img = img.resize({ width: 18, height: 18 });
     }

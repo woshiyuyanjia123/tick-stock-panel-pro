@@ -101,9 +101,11 @@ export default function DashboardPage({ onSelectStock, onNavigate }: DashboardPa
   const radarRef = useRef<HTMLDivElement | null>(null);
   const radarChartRef = useRef<echarts.ECharts | null>(null);
 
-  const fetchDashboard = useCallback(async (dateOverride?: string) => {
-    setLoading(true);
-    setError(null);
+  const fetchDashboard = useCallback(async (dateOverride?: string, silent = false) => {
+    if (silent !== true) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const [res, pmRes] = await Promise.all([
         api.getDashboard(dateOverride || undefined),
@@ -115,15 +117,28 @@ export default function DashboardPage({ onSelectStock, onNavigate }: DashboardPa
         setSelectedDate(res.resolvedDate || res.date);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载市场全貌失败');
+      if (silent !== true) {
+        setError(err instanceof Error ? err.message : '加载市场全貌失败');
+      }
     } finally {
-      setLoading(false);
+      if (silent !== true) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     fetchDashboard();
   }, [fetchDashboard]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!document.hidden) {
+        void fetchDashboard(selectedDate || undefined, true);
+      }
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [fetchDashboard, selectedDate]);
 
   const toggleSection = (key: SectionKey) => {
     setVisibleSections((prev) => {

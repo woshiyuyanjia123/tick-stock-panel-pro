@@ -654,7 +654,7 @@ function renderInlineMarkdown(text: string): React.ReactNode {
       return (
         <code
           key={idx}
-          className="px-1 py-0.5 mx-0.5 bg-[#090c10] border border-[#252c38] text-[#e5b567] font-mono text-[11px] rounded-[2px]"
+          className="px-1 py-0.5 mx-0.5 bg-[#090c10] border border-[#252c38] text-[#e5b567] font-mono text-[11px]"
         >
           {part.slice(1, -1)}
         </code>
@@ -1058,9 +1058,11 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
   };
 
   // Load overview
-  const loadOverview = useCallback(async () => {
-    setOverviewLoading(true);
-    setOverviewError(null);
+  const loadOverview = useCallback(async (silent = false) => {
+    if (silent !== true) {
+      setOverviewLoading(true);
+      setOverviewError(null);
+    }
     try {
       const res = await fetch('/api/panda-pm/overview');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1073,11 +1075,23 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
         setSelectedPmEventId((prev) => prev || json.pmEvents![0].id);
       }
       if (json?.futuresQuotes?.length) {
+        let focusFut = '';
+        try {
+          const pending = window.localStorage.getItem('tsp_focus_symbol');
+          if (pending && json.futuresQuotes!.some((q) => q.symbol === pending)) {
+            focusFut = pending;
+            window.localStorage.removeItem('tsp_focus_symbol');
+          }
+        } catch {
+          // ignore
+        }
         setSelectedSymbol((prev) => {
+          if (focusFut) return focusFut;
           const exists = json.futuresQuotes!.some((q) => q.symbol === prev);
           return exists ? prev : json.futuresQuotes![0].symbol;
         });
         setBtSymbol((prev) => {
+          if (focusFut) return focusFut;
           const exists = json.futuresQuotes!.some((q) => q.symbol === prev);
           return exists ? prev : json.futuresQuotes![0].symbol;
         });
@@ -1086,9 +1100,13 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
         setSelectedLogId((prev) => prev || json.autonomyLogs![0].id);
       }
     } catch (e: any) {
-      setOverviewError(e?.message || '无法加载 PandaAI x Polymarket 跨市总览数据');
+      if (silent !== true) {
+        setOverviewError(e?.message || '无法加载 PandaAI x Polymarket 跨市总览数据');
+      }
     } finally {
-      setOverviewLoading(false);
+      if (silent !== true) {
+        setOverviewLoading(false);
+      }
     }
   }, []);
 
@@ -1163,6 +1181,15 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
     loadOverview();
     loadRelationMatrix('all');
   }, [loadOverview, loadRelationMatrix]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!document.hidden) {
+        void loadOverview(true);
+      }
+    }, 45_000);
+    return () => clearInterval(timer);
+  }, [loadOverview]);
 
   const factors = useMemo(() => overview?.factors ?? [], [overview]);
   const pmEvents = useMemo(() => overview?.pmEvents ?? [], [overview]);
@@ -2322,8 +2349,8 @@ export default function PandaPmCommandPage({ onSelectStock, onNavigate }: PandaP
         <div className="h-[24px] px-3 bg-[#2a1215] border-b border-[#5c1d22] flex items-center justify-between text-xs text-[#ff6b6b] shrink-0">
           <span>数据加载异常: {overviewError}</span>
           <button
-            onClick={loadOverview}
-            className="px-2 py-0.5 bg-[#3b181c] border border-[#ff3535] text-[11px] rounded-[2px]"
+            onClick={() => void loadOverview(false)}
+            className="px-2 py-0.5 bg-[#3b181c] border border-[#ff3535] text-[11px]"
           >
             重试
           </button>

@@ -760,26 +760,34 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
     []
   );
 
-  const loadCpoOverview = useCallback(async () => {
-    setCpoLoading(true);
-    setCpoError(null);
+  const loadCpoOverview = useCallback(async (silent = false) => {
+    if (silent !== true) {
+      setCpoLoading(true);
+      setCpoError(null);
+    }
     try {
       const res = await api.getCpoTransmissionOverview();
       setCpoOverview(res);
     } catch (e: unknown) {
-      setCpoError(e instanceof Error ? e.message : '加载CPO传导截面失败');
+      if (silent !== true) {
+        setCpoError(e instanceof Error ? e.message : '加载CPO传导截面失败');
+      }
     } finally {
-      setCpoLoading(false);
+      if (silent !== true) {
+        setCpoLoading(false);
+      }
     }
   }, []);
 
-  const loadAltOverview = useCallback(async () => {
-    setAltLoading(true);
-    setAltError(null);
+  const loadAltOverview = useCallback(async (silent = false) => {
+    if (silent !== true) {
+      setAltLoading(true);
+      setAltError(null);
+    }
     try {
       const res = await api.getAltConsensusOverview();
       setAltOverview(res);
-      if (res.collectorConfig) {
+      if (res.collectorConfig && silent !== true) {
         setCfgForm((prev) => ({
           ...prev,
           autoSnapshotMinutes: res.collectorConfig.autoSnapshotMinutes ?? 15,
@@ -796,15 +804,40 @@ export default function ConsensusCpoPage({ onSelectStock, onNavigate }: Consensu
         }
       }
     } catch (e: unknown) {
-      setAltError(e instanceof Error ? e.message : '加载全维认知截面失败');
+      if (silent !== true) {
+        setAltError(e instanceof Error ? e.message : '加载全维认知截面失败');
+      }
     } finally {
-      setAltLoading(false);
+      if (silent !== true) {
+        setAltLoading(false);
+      }
     }
   }, [cvSignalId]);
 
   useEffect(() => {
     loadCpoOverview();
     loadAltOverview();
+  }, [loadCpoOverview, loadAltOverview]);
+
+  useEffect(() => {
+    const onJobTick = (evt: Event) => {
+      const job = (evt as CustomEvent<{ job?: string }>).detail?.job;
+      if (job === 'alert_and_cpo_watch') {
+        void loadCpoOverview(true);
+      } else if (job === 'consensus_auto_snapshot') {
+        void loadAltOverview(true);
+      }
+    };
+    window.addEventListener('tsp:job-tick', onJobTick);
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      void loadCpoOverview(true);
+      void loadAltOverview(true);
+    }, 45_000);
+    return () => {
+      window.removeEventListener('tsp:job-tick', onJobTick);
+      clearInterval(timer);
+    };
   }, [loadCpoOverview, loadAltOverview]);
 
   const runCpoBacktest = useCallback(

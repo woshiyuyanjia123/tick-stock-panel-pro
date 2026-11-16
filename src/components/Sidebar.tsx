@@ -18,24 +18,25 @@ interface RailItem {
   short: string;
   label: string;
   accent?: 'alpha' | 'ext';
+  groupHeader?: string;
 }
 
 const RAIL_ITEMS: RailItem[] = [
-  { id: 'dashboard', short: '看板', label: 'F1 市场全貌(看板)' },
+  { id: 'dashboard', short: '看板', label: 'F1 市场全貌(看板)', groupHeader: '行情' },
   { id: 'watchlist', short: '自选', label: 'F2 自选报价' },
   { id: 'ladder', short: '连板', label: 'F3 连板复盘', accent: 'ext' },
   { id: 'concept', short: '概念', label: 'F4 概念轮动', accent: 'ext' },
   { id: 'industry', short: '行业', label: 'F5 行业矩阵', accent: 'ext' },
   { id: 'market-env', short: '周期', label: 'F6 市场周期' },
-  { id: 'strategy', short: '策略', label: 'F7 策略选股' },
+  { id: 'strategy', short: '策略', label: 'F7 策略选股', groupHeader: '量化' },
   { id: 'factor', short: '因子', label: 'F7 因子研究' },
   { id: 'backtest', short: '回测', label: 'F8 T+1回测系统' },
   { id: 'stock', short: '个股', label: 'F9 个股深度', accent: 'ext' },
   { id: 'finance', short: '财务', label: 'F9 财务F10分析', accent: 'ext' },
-  { id: 'panda-pm', short: '跨市', label: 'F10 PandaAI x 期货PM', accent: 'alpha' },
+  { id: 'panda-pm', short: '跨市', label: 'F10 PandaAI x 期货PM', accent: 'alpha', groupHeader: 'Alpha' },
   { id: 'consensus-cpo', short: '认知', label: 'F12 超前认知定价与CPO传导', accent: 'alpha' },
   { id: 'fact-fupeng', short: '付鹏', label: '确定买点复盘 & 付鹏24h宏观FICC', accent: 'alpha' },
-  { id: 'saas-desk', short: '实盘', label: '模拟实盘与SaaS中枢', accent: 'alpha' },
+  { id: 'saas-desk', short: '实盘', label: '模拟实盘与SaaS中枢', accent: 'alpha', groupHeader: '实盘' },
   { id: 'monitor', short: '监控', label: 'F11 监控中心', accent: 'ext' },
   { id: 'anomaly', short: '异动', label: 'F11 短线异动精灵', accent: 'ext' },
 ];
@@ -56,20 +57,26 @@ export default function Sidebar({
           const isActive = activeTab === item.id;
           const isAlpha = item.accent === 'alpha';
           return (
-            <button
-              key={item.id}
-              onClick={() => onSelectTab(item.id)}
-              title={item.label}
-              className={`w-full h-[32px] flex items-center justify-center text-[11px] border-b border-[#181d26] border-l-2 transition-colors ${
-                isActive
-                  ? 'border-l-[#ff8800] bg-[#19202d] text-[#ff9500] font-semibold'
-                  : isAlpha
-                  ? 'border-l-[#f0b90b] bg-[#141820] text-[#f0b90b] hover:bg-[#1b2230]'
-                  : 'border-l-transparent text-[#8b95a5] hover:text-[#dfe6f0] hover:bg-[#161c26]'
-              }`}
-            >
-              {item.short}
-            </button>
+            <React.Fragment key={item.id}>
+              {item.groupHeader && (
+                <div className="w-full h-[15px] px-1 bg-[#0a0d12] border-b border-[#1c2330] flex items-center justify-center text-[9px] font-mono text-[#535e70] tracking-tighter">
+                  {item.groupHeader}
+                </div>
+              )}
+              <button
+                onClick={() => onSelectTab(item.id)}
+                title={item.label}
+                className={`w-full h-[30px] flex items-center justify-center text-[11px] border-b border-[#181d26] border-l-2 transition-colors ${
+                  isActive
+                    ? 'border-l-[#ff8800] bg-[#19202d] text-[#ff9500] font-semibold'
+                    : isAlpha
+                    ? 'border-l-[#f0b90b] bg-[#141820] text-[#f0b90b] hover:bg-[#1b2230]'
+                    : 'border-l-transparent text-[#8b95a5] hover:text-[#dfe6f0] hover:bg-[#161c26]'
+                }`}
+              >
+                {item.short}
+              </button>
+            </React.Fragment>
           );
         })}
       </div>

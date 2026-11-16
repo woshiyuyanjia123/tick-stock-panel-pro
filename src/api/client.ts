@@ -28,6 +28,7 @@ import type {
   FuturesBacktestRequest,
   FuturesBacktestResponse,
   FuturesKlinesResponse,
+  GlobalCommandStripSummary,
   HealthResponse,
   IndustriesResponse,
   IndustryDetailResponse,
@@ -56,6 +57,7 @@ import type {
   ScreenerResponse,
   StockDetailResponse,
   StockSearchItem,
+  StreamJobTickPayload,
   WatchlistItem,
   WebhookChannelItem,
 } from '../types/market';
@@ -444,12 +446,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  getCommandStrip: () => request<GlobalCommandStripSummary>('/api/stream/command-strip'),
 };
 
 export function subscribeRealtimeStream(handlers: {
   onConnected?: (d: any) => void;
   onPulse?: (p: RealtimePulsePayload) => void;
   onAlert?: (a: AlertTriggerEvent) => void;
+  onJobTick?: (t: StreamJobTickPayload) => void;
   onStatusChange?: (connected: boolean) => void;
 }): () => void {
   let es: EventSource | null = null;
@@ -486,6 +491,18 @@ export function subscribeRealtimeStream(handlers: {
     es.addEventListener('alert', (evt: MessageEvent) => {
       try {
         handlers.onAlert?.(JSON.parse(evt.data) as AlertTriggerEvent);
+      } catch {
+        // ignore
+      }
+    });
+
+    es.addEventListener('job_tick', (evt: MessageEvent) => {
+      try {
+        const tick = JSON.parse(evt.data) as StreamJobTickPayload;
+        handlers.onJobTick?.(tick);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tsp:job-tick', { detail: tick }));
+        }
       } catch {
         // ignore
       }

@@ -1876,3 +1876,27 @@ export interface FupengBarbellBacktestResponse {
     weightsText: string;
   }[];
 }
+
+export interface GlobalCommandStripSummary {
+  updatedAt: string;
+  fupengRegime: string;
+  fupengIntelCount: number;
+  fupengLastScrapedAt: string | null;
+  cpoRegime: string;
+  cpoGatesPassed: number;
+  cpoGatesTotal: number;
+  tmtCrowdingPct: number | null;
+  fact4of4Symbols: { symbol: string; name: string }[];
+  fact3of4Symbols: { symbol: string; name: string }[];
+  activeJobsOk: number;
+  totalJobs: number;
+}
+
+export interface StreamJobTickPayload {
+  job: string;
+  timestamp: string;
+  runCount: number;
+  status: 'idle' | 'running' | 'ok' | 'error';
+  detail: string;
+  commandStrip?: GlobalCommandStripSummary;
+}
